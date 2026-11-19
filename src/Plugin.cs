@@ -8,10 +8,12 @@ using UnityEngine;
 
 namespace TeamModVersions;
 
-[BepInPlugin(Id, "confilctmodlist", "1.0.0")]
+[BepInPlugin(Id, ModName, Version)]
 public sealed class Plugin : BasePlugin
 {
-    internal const string Id = "hawchow.confilctmodlist";
+    internal const string ModName = "conflictmodlist";
+    internal const string Id = "hawchow." + ModName;
+    internal const string Version = "1.0.1";
     internal static ManualLogSource Logger = null!;
     internal static ConfigEntry<bool> ShowMatches = null!;
     internal static TeamVersionsDriver? Driver;
@@ -25,7 +27,7 @@ public sealed class Plugin : BasePlugin
         Driver = AddComponent<TeamVersionsDriver>();
         patches = new Harmony(Id);
         patches.PatchAll(typeof(Plugin).Assembly);
-        Logger.LogInfo("confilctmodlist 已加载，通过 Steam 大厅同步模组版本。");
+        Logger.LogInfo($"{ModName} 已加载，通过 Steam 大厅同步模组版本。");
     }
 
     public override bool Unload()

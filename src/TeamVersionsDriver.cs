@@ -95,7 +95,7 @@ public sealed class TeamVersionsDriver : MonoBehaviour
                 RemoveButton();
                 var item = current.m_guiLayer.AddRectComp(bar.m_inviteButton.gameObject, (GuiAnchor)4, Vector2.zero, parent).Cast<CM_Item>();
                 button = item; anchor = parent;
-                item.gameObject.name = "hawchow_confilctmodlist_Button";
+                item.gameObject.name = $"hawchow_{Plugin.ModName}_Button";
                 item.ID = 23870194;
                 item.OnBtnPressCallback = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>((Action<int>)Toggle);
                 item.transform.localScale = new Vector3(.75f, .75f, .75f);
