@@ -1,0 +1,9 @@
+{
+  "name": "confilctmodlist",
+  "version_number": "1.0.0",
+  "website_url": "https://github.com/hawchou1995/confilctmodlist",
+  "description": "下矿前在 GTFO 大厅对照队友已加载的模组版本，标出版本差异。无需 Hikaria Core。",
+  "dependencies": [
+    "BepInEx-BepInExPack_GTFO-3.2.3"
+  ]
+}

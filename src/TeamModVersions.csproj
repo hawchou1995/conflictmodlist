@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>11</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>1.0.0</Version>
+    <Deterministic>true</Deterministic>
+    <AssemblyName>confilctmodlist</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>TeamModVersions</RootNamespace>
+    <BepInExDir>$(GtfoRoot)/BepInEx</BepInExDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+  <Target Name="CheckGameReferences" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(GtfoRoot)' == '' Or !Exists('$(BepInExDir)/interop/SNet_ASM.dll')" Text="Pass -p:GtfoRoot=… pointing to a GTFO installation with generated BepInEx interop assemblies." />
+  </Target>
+  <ItemGroup>
+    <Compile Include="*.cs;../shared/*.cs" />
+    <Reference Include="BepInEx.Core;BepInEx.Unity.IL2CPP;0Harmony;Il2CppInterop.Runtime;SemanticVersioning">
+      <HintPath>$(BepInExDir)/core/%(Identity).dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="SNet_ASM;SteamWorks_ASM;Modules-ASM;GUIX-ASM;Utils-ASM;Il2Cppmscorlib;UnityEngine.CoreModule;UnityEngine.IMGUIModule;UnityEngine.TextRenderingModule;Unity.TextMeshPro">
+      <HintPath>$(BepInExDir)/interop/%(Identity).dll</HintPath><Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

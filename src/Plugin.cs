@@ -1,0 +1,56 @@
+using BepInEx;
+using BepInEx.Configuration;
+using BepInEx.Logging;
+using BepInEx.Unity.IL2CPP;
+using CellMenu;
+using HarmonyLib;
+using UnityEngine;
+
+namespace TeamModVersions;
+
+[BepInPlugin(Id, "confilctmodlist", "1.0.0")]
+public sealed class Plugin : BasePlugin
+{
+    internal const string Id = "hawchow.confilctmodlist";
+    internal static ManualLogSource Logger = null!;
+    internal static ConfigEntry<bool> ShowMatches = null!;
+    internal static TeamVersionsDriver? Driver;
+    private Harmony? patches;
+
+    public override void Load()
+    {
+        Logger = Log;
+        ShowMatches = Config.Bind("Display", "ShowMatchingMods", false,
+            "默认隐藏全队已加载且版本一致的模组。开启后，在版本差异表末尾单独显示这些模组。此项只影响本机显示。");
+        Driver = AddComponent<TeamVersionsDriver>();
+        patches = new Harmony(Id);
+        patches.PatchAll(typeof(Plugin).Assembly);
+        Logger.LogInfo("confilctmodlist 已加载，通过 Steam 大厅同步模组版本。");
+    }
+
+    public override bool Unload()
+    {
+        patches?.UnpatchSelf();
+        if (Driver != null)
+        {
+            Driver.Shutdown();
+            UnityEngine.Object.Destroy(Driver);
+        }
+        Driver = null;
+        return true;
+    }
+}
+
+[HarmonyPatch(typeof(CM_PageLoadout), nameof(CM_PageLoadout.SetPageActive))]
+internal static class PageActive
+{
+    [HarmonyPostfix]
+    private static void After(CM_PageLoadout __instance, bool __0) => Plugin.Driver?.SetPage(__instance, __0);
+}
+
+[HarmonyPatch(typeof(CM_PageLoadout), nameof(CM_PageLoadout.SetPopupVisible))]
+internal static class PagePopup
+{
+    [HarmonyPostfix]
+    private static void After(CM_PageLoadout __instance) => Plugin.Driver?.CloseForPage(__instance);
+}
