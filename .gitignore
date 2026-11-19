@@ -1,0 +1,16 @@
+# 构建产物
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+
+# 打包与本地临时文件
+*.zip
+*.log
+*.pdb
+*.deps.json
+*.runtimeconfig.json
+packaging/out/
+artifacts/

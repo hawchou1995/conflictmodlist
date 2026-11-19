@@ -1,6 +1,6 @@
 {
   "name": "conflictmodlist",
-  "version_number": "1.0.1",
+  "version_number": "1.0.2",
   "website_url": "https://github.com/hawchou1995/conflictmodlist",
   "description": "下矿前在 GTFO 大厅对照队友加载的模组版本，标出版本差异。",
   "dependencies": ["BepInEx-BepInExPack_GTFO-3.2.4"]
