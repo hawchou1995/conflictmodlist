@@ -24,6 +24,7 @@ internal static class Gate
         internal bool Blind, Opaque, Frozen, Trickle, Game, Host, HostZero, HostTrickle;
         internal int HostPolls;
         internal int? GamePing;
+        internal bool DropOutgoing;
         internal readonly Dictionary<ulong,float> LastQuery = new(), LastSend = new();
         private readonly Queue<(int Ready, ulong From,byte[] Bytes)> inbox = new();
         internal Client(World world,ulong id) { w=world; Id=id; epoch=id*100; Service=new(this); }
@@ -33,8 +34,9 @@ internal static class Gate
         {
             Check(w.Members.Contains(id) && id != Id,"queried non-member"); Limit(LastQuery,id); Queries++;
             if (Blind) return (0,-1); // test knob: peer present in roster but unreachable
-            if (!compatible) return NetworkLink.CachedEstimate(GamePing ?? (int)(20*Id+id));
-            return id == 4 && Id == 2 ? (0,-1) : (id==3 ? 2 : 1,(int)(20*Id+id));
+            int ping = GamePing ?? (int)(20*Id+id);
+            if (!compatible || (id == 4 && Id == 2)) return NetworkLink.CachedEstimate(ping);
+            return (id==3 ? 2 : 1,ping);
         }
         private void Limit(Dictionary<ulong,float> map,ulong id)
         { if (map.TryGetValue(id,out float old)) Check(w.Now-old >= 1,"per-peer burst"); map[id]=w.Now; }
@@ -64,7 +66,7 @@ internal static class Gate
             Limit(LastSend,id); Pulses++; PulseBytes+=bytes.Length;
             Check(NetworkWire.Decode(bytes,out var p) && p.ToEpoch == w.Clients[id].epoch,"unbound pulse");
             // Different delay/loss on the two directions of the very same link.
-            if (!(Id==1 && id==2 && p.Seq%5==0)) w.Clients[id].inbox.Enqueue((w.Frame+(int)(Id+id+p.Seq%3),Id,bytes));
+            if (!DropOutgoing && !(Id==1 && id==2 && p.Seq%5==0)) w.Clients[id].inbox.Enqueue((w.Frame+(int)(Id+id+p.Seq%3),Id,bytes));
             return true;
         }
         public bool Receive(out ulong peer,out byte[] bytes)
@@ -99,7 +101,7 @@ internal static class Gate
             if(installs==1) Check(shownCells[0,2].Contains("采样时间未知"),"cached estimates retain provenance in visible card");
             foreach(var r in w.Clients.Values.Where(r=>r!=c))
             {
-                if (c.Id==1 && r.Id==2) Check(c.Text(c.Id).Contains("应用波动") && c.Text(c.Id).Contains("往返 0–"),"probe range and application variation explicitly labeled");
+                if (c.Id==1 && r.Id==2) Check(c.Text(c.Id).Contains("应用波动") && c.Text(c.Id).Contains("往返上限"),"probe upper bound and application variation explicitly labeled");
                 var text=c.Text(r.Id);
                 Check(text.Contains("来源：队友大厅报告") && text.Contains($"该端接收 {60*r.Id} KiB/s"),"observer/source attribution");
                 HudCard.Fill(c.Service.Lines(r.Id,i=>$"P{i}"),false,shownCells,1);
@@ -114,7 +116,7 @@ internal static class Gate
             var e=report.Edges.Single(e=>e.Peer==2);
             Check(e.Route==1 && e.Rtt is >0 and <1000 && e.Jitter>=0 && e.Rx==0 && e.Tx>0,"real service: directional pulse RTT/jitter/loss");
         }
-        if(installs<4) Check(w.Clients[1].Text(4).Contains("无新鲜的队友报告") && w.Clients[1].Text(1).Contains("游戏估值"),"unmodified host fallback");
+        if(installs<4) Check(w.Clients[1].Text(4).Contains("无新鲜的队友报告") && w.Clients[1].Text(1).Contains("游戏缓存"),"unmodified host fallback");
         if(installs==1) Check(msg==0 && polls==0,"solo must never probe or poll");
         Console.WriteLine($"60s {mode,-6} {installs}/4: queries={n}, memberReads={reads}, reports={writes}, pulses={msg}, payloadBytes={bytes}, polls={polls}, peersCached={cache}, maxHistory={history}");
     }
@@ -128,6 +130,8 @@ internal static class Gate
         w.Data[2]="!!!"; w.Run(22,_=>true); Check(c.Text(2).Contains("无新鲜"),"malformed");
         other.On=true; w.Run(29,_=>true); Check(c.Text(2).Contains("队友大厅报告"),"failed to recover");
         other.On=false; w.Run(48,_=>true); Check(c.Text(2).Contains("无新鲜"),"stale identical report was renewed");
+        string expired=Slot(c.Service,2,false,false);
+        Check(expired.Contains("往返估值") && expired.Contains("队友报告已过期") && !expired.Contains("往返上限") && c.Text(1).Contains("队友报告已过期"),"expired cooperation does not refresh probe readings");
         int sent=c.Pulses; w.Run(53,_=>true); Check(c.Pulses==sent,"stale probe");
         w.Members=new ulong[]{1,3,4}; w.Run(54,_=>true); Check(c.Service.CacheCount==2 && c.Text(2).Contains("已离开"),"leave cleanup");
         w.Members=new ulong[]{1,2,3,4}; w.Run(55,_=>true); Check(c.Text(2).Contains("无新鲜"),"rejoin replay");
@@ -161,7 +165,7 @@ internal static class Gate
         var wrongVersion=Convert.FromBase64String(text); wrongVersion[3]=(byte)'1';
         Check(NetworkWire.Key!="tmv.net1" && !NetworkWire.Decode(Convert.ToBase64String(wrongVersion),roster,2,out _),"fresh v1 declaration is not compatible");
         var tw=new World(); var only=tw.Add(1); tw.Run(20,_=>true);
-        Check(only.Text(1).Contains("游戏估值") && only.Text(1).Contains("采样时间未知") && !only.Text(1).Contains("） 往返"),"frozen local game estimate is not fresh directional RTT");
+        Check(only.Text(1).Contains("游戏缓存") && only.Text(1).Contains("采样时间未知") && only.Text(1).Contains("往返估值 22 ms") && !only.Text(1).Contains("） 往返上限"),"frozen local game estimate is not fresh probe RTT");
         var asPeer=new NetworkRoster(new(tw.Lobby,tw.Session,4),tw.Members,tw.Clock);
         Check(NetworkWire.Decode(tw.Data[1],asPeer,1,out var estReport) && estReport.Edges.All(e=>e.Rtt<0),"do not publish unsourced game estimates as links");
         // Same 20ms wire RTT, different time spent waiting before each receiver polls.
@@ -191,28 +195,32 @@ internal static class Gate
             self.Contains("采样 #30 · 0.98 秒前") && !self.Contains("往返") &&
             self.Contains("无共享真人"),"local slot: own process P2P receive/send with units, advancing sample stamp, no peer link");
         const string missing="延迟 -- 抖动 -- 丢包 --";
-        Check(self.Contains(missing) && Slot(only.Service,1,false,false)==self,"solo lobby keeps all three link metrics and real throughput");
-        only.Service.Reset(); Check(Slot(only.Service,1,true,false).Contains(missing),"solo placeholders also exist before roster confirmation");
+        Check(!self.Contains(missing) && Slot(only.Service,1,false,false)==self,"solo local slot has throughput, not self-link placeholders");
+        only.Service.Reset(); Check(!Slot(only.Service,1,true,false).Contains(missing),"no self-link placeholders before roster confirmation");
         string bot=Slot(only.Service,2,false,true);
         Check(bot=="BOT · 网络\n无独立网络连接\n"+missing && !bot.Contains('0'),"BOT shows three unavailable metrics, not fabricated measurements");
         Check(Slot(only.Service,0,true,true)==bot && Slot(only.Service,1,true,true)==bot && Slot(only.Service,0,false,false).StartsWith("队友\n"),"bot takes precedence over zero/self ID and local ownership; unknown remote is not self");
         var team=new World(); for(ulong i=1;i<=4;i++) team.Add(i); team.Run(60,_=>true);
+        foreach (var c in team.Clients.Values)
+            Check(Slot(c.Service,c.Id,true,false).Split('\n') is [_,var rx,var tx,var stamp] && rx.StartsWith("收 ") && tx.StartsWith("发 ") && stamp.StartsWith("采样 #"),"local slot with cooperating peers: own rates and stamp only");
         Check(Slot(team.Clients[1].Service,2,false,true)==bot,"bot slot identical next to a live roster");
         Check(Slot(team.Clients[1].Service,3,false,true)==bot,"bot slot never inherits the peer that shares its id");
         // Unconfirmed: a roster member without a shared report keeps a labelled source and no probe numbers.
         var pending=new World(); var host=pending.Add(1); pending.Run(30,_=>true);
         string pendingText=Slot(host.Service,2,false,false);
-        Check(pendingText.StartsWith("队友\n本机→游戏估值\n") && pendingText.Contains("（估）") &&
-            pendingText.Contains("波动/探针缺失 未知") && pendingText.EndsWith("未确认，仅游戏内估值"),"unconfirmed peer: estimate source labelled, no probe claim");
+        Check(pendingText.StartsWith("队友\n游戏缓存·采样时间未知\n往返估值 22 ms") &&
+            pendingText.Contains("波动/探针缺号 未知") && pendingText.EndsWith("无近期兼容报告"),"unconfirmed peer: estimate source labelled, no probe claim");
         pending.Clients[1].Blind=true; pending.Run(45,_=>true);
-        Check(Slot(host.Service,2,false,false)=="队友\n本机→未测得\n往返 未知\n未确认，无共享报告","unreachable peer: unknown, never 0 ms");
+        Check(Slot(host.Service,2,false,false)=="队友\n本机: 未测得\n往返 未知\n波动/探针缺号 未知\n无近期兼容报告","unreachable peer: unknown, never 0 ms");
         // Confirmed: fresh report plus own probe give the local->peer range, jitter and both loss directions.
         var live=new World(); for(ulong i=1;i<=4;i++) live.Add(i); live.Run(60,_=>true);
         var c1=live.Clients[1].Service;
         string p2=Slot(c1,2,false,false);
-        Check(p2.StartsWith("队友\n本机→直连探针\n往返 0–") && p2.Contains("波动 ") && p2.Contains("缺收 ") && p2.Contains("　缺发 ") &&
-            !p2.Contains("未确认") && p2.Split('\n').Length==5,"confirmed peer: probe range, application variation, per-direction probe loss");
-        Check(Slot(c1,3,false,false).StartsWith("队友\n本机→中继探针\n往返 0–"),"relay link keeps its own direction label");
+        Check(p2.StartsWith("队友\n本机: 直连探针\n往返上限 ") && p2.Contains("波动 ") && p2.Contains("缺收 ") && p2.Contains("　缺发 ") &&
+            !p2.Contains("未确认") && p2.Split('\n').Length==5,"confirmed peer: probe upper bound, application variation, per-direction probe gaps");
+        Check(Slot(c1,3,false,false).StartsWith("队友\n本机: 中继探针\n往返上限 "),"relay link keeps its own direction label");
+        var noRoute=live.Clients[2];
+        Check(Slot(noRoute.Service,4,false,false).Contains("往返估值 44 ms\n波动/探针缺号 未知\n已收报告·探针不可用") && noRoute.Text(2).Contains("已收报告·探针不可用"),"compatible but no probe route: retain cached ping without claiming a probe");
         // Direction: a peer's own report about a third player is that observer's view, never this slot's numbers.
         live.Clients[2].On=false; live.Run(61,_=>true); // advance the server clock past player 2's last report
         Check(NetworkWire.Decode(live.Data[2],new NetworkRoster(new(live.Lobby,live.Session,1),live.Members,live.Clock),2,out var real2),"read player 2's own epoch");
@@ -222,16 +230,37 @@ internal static class Gate
         string remoteView=string.Join("|",c1.Lines(2,i=>$"P{i}"));
         Check(remoteView.Contains("1000") && remoteView.Contains("2048"),"injected report is visible only from that observer");
         string p3=Slot(c1,3,false,false);
-        Check(p3.Contains("本机→中继探针") && !p3.Contains("999") && !p3.Contains("1000"),"slot for player 3 ignores player 2's distance to it");
+        Check(p3.Contains("本机: 中继探针") && !p3.Contains("999") && !p3.Contains("1000"),"slot for player 3 ignores player 2's distance to it");
         string of2=Slot(c1,2,false,false);
-        Check(!of2.Contains("2048") && !of2.Contains("4096") && of2.Contains("本机→"),"slot for player 2 ignores its self-reported rates");
+        Check(!of2.Contains("2048") && !of2.Contains("4096") && of2.Contains("本机: "),"slot for player 2 ignores its self-reported rates");
         // Removal and replacement: no carried-over numbers, no leftover cache entry.
         live.Members=new ulong[]{1,3,4}; live.Run(63,_=>true);
         Check(Slot(c1,2,false,false)=="队友\n网络名单未确认\n无链路数据","departed player keeps no cached numbers");
         live.Add(5); live.Members=new ulong[]{1,3,4,5}; live.Run(64,_=>true);
         string p5=Slot(c1,5,false,false);
-        Check(p5.StartsWith("队友\n本机→游戏估值\n往返 ") && !p5.Contains("0–") && p5.EndsWith("未确认，仅游戏内估值"),"replacement player starts unmeasured");
+        Check(p5.StartsWith("队友\n游戏缓存·采样时间未知\n往返估值 ") && p5.EndsWith("无近期兼容报告"),"replacement player starts unmeasured");
         Console.WriteLine($"slot cards: maxLines={slotLines}, maxWidth={slotWidth} (columns, CJK=2)");
+    }
+    private static void PartialProbe()
+    {
+        var w=new World {Members=new ulong[]{1,2}}; var a=w.Add(1); var b=w.Add(2);
+        a.DropOutgoing=true; w.Run(20,_=>true); // B's pulses arrive in order but cannot echo A or report its gaps.
+        foreach (int ping in new[]{44,0})
+        {
+            a.GamePing=ping; w.Run(w.Frame/60+2,_=>true);
+            string card=Slot(a.Service,2,false,false), panel=a.Text(1);
+            string rtt=ping==44 ? "往返估值 44 ms" : "往返 未知";
+            Check(card.Contains(rtt) && card.Contains("波动 待采样\n缺收 0%　缺发 未知\n等待探针回声"),"no echo: card keeps the independent zero and unknown");
+            Check(panel.Contains(rtt) && panel.Contains("等待探针回声") && panel.Contains("应用波动 待采样　缺收 0% / 缺发 未知"),"no echo: panel keeps the independent zero and unknown");
+            var cells=new string[1,HudCard.Rows]; HudCard.Fill(a.Service.Lines(1,_=>"B"),true,cells,0);
+            Check(cells[0,2].Contains("0/—") && cells[0,2].Contains("待采样"),"panel projection preserves independent readings");
+        }
+        a.Blind=true; w.Run(26,_=>true);
+        Check(Slot(a.Service,2,false,false).Contains("往返 未知\n波动/探针缺号 未知\n已收报告·探针不可用"),"fresh report without route or cache");
+        var edge=new NetworkEdge(1,1,0,0,-1,0); b.On=false;
+        Check(NetworkWire.Decode(w.Data[2],new NetworkRoster(new(w.Lobby,w.Session,1),w.Members,w.Clock),2,out var last),"get report epoch");
+        w.Data[2]=NetworkWire.Encode(new(w.Lobby,w.Session,2), last with {Issued=w.Clock, Edges=new[]{edge}}); w.Run(27,_=>true);
+        Check(a.Text(2).Contains("往返上限 1 ms|应用波动 0 ms　缺收 未知 / 缺发 0%"),"reported zero residual, zero jitter and zero TX gaps are not missing samples");
     }
     private static void Sampling()
     {
@@ -255,7 +284,7 @@ internal static class Gate
         // Four states stay distinct: no peer, no baseline, unobservable payload, and a measured zero.
         var w=new World(); w.Members=new ulong[]{1}; var alone=w.Add(1); w.Run(20,_=>true);
         string solo=Slot(alone.Service,1,true,false);
-        Check(solo.Contains("无共享真人") && solo.Contains("延迟 --") && solo.Contains("采样 #20 · "),"no peer: placeholders and a live sample, no invented link");
+        Check(solo.Contains("无共享真人") && !solo.Contains("延迟 --") && solo.Contains("采样 #20 · "),"no peer: retain sampling and status without a fictitious self-link");
         var o=new World(); o.Members=new ulong[]{1,2}; var host=o.Add(1); var peer=o.Add(2);
         host.Opaque=true; peer.Opaque=true; o.Run(20,_=>true);
         string opaque=Slot(host.Service,1,true,false);
@@ -320,10 +349,10 @@ internal static class Gate
         w.Members=new ulong[]{1,2}; client.GamePing=0; w.Run(2,_=>true);
         Check(Slot(client.Service,2,false,false).Contains("往返 未知") && client.Pulses==0,"unconfirmed join: no synthetic zero or outgoing probe");
         client.GamePing=44; w.Run(3,_=>true);
-        Check(Slot(client.Service,2,false,false).Contains("往返 44 ms（估）") && client.Pulses==0,"cached game ping after join, no Messages session or probe");
+        Check(Slot(client.Service,2,false,false).Contains("往返估值 44 ms") && client.Pulses==0,"cached game ping after join, no Messages session or probe");
         client.GamePing=-1; w.Run(4,_=>true); Check(Slot(client.Service,2,false,false).Contains("往返 未知"),"loss of estimate is not last known RTT");
         Console.WriteLine("PASS unconfirmed peer joins: unknown -> 44ms game estimate -> unknown; no probes");
-        Budget("open",4); Budget("closed",4); Budget("mixed",2); Budget("closed",1); Rejection(); WireAndMath(); Slots(); Sampling(); Coverage();
+        Budget("open",4); Budget("closed",4); Budget("mixed",2); Budget("closed",1); Rejection(); WireAndMath(); Slots(); PartialProbe(); Sampling(); Coverage();
         Console.WriteLine("PASS NetworkGate");
     }
 }

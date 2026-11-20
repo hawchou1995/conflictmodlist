@@ -23,17 +23,23 @@
 
 已安装的玩家通过 Steam 大厅共享自己的模组名称、GUID 和版本。不读取队友磁盘，也不需要房主转发。「未同步」不等于对方没有安装模组。
 
+![四人队伍的模组对照表：三人已同步，一人显示未同步](https://raw.githubusercontent.com/hawchou1995/conflictmodlist/v1.1.10/docs/mod-comparison.png)
+
 ## 大厅常显网络分析
 
 ![透明通信看板在明暗背景上的离线示意，非游戏截图](https://raw.githubusercontent.com/hawchou1995/conflictmodlist/v1.1.8/docs/field-terminal-preview.png)
 
-未确认支持合作探针的队友，只使用游戏已经缓存的正值 `SNet_Player.Ping`，标为游戏估值（采样时间未知）；无有效估值时显示未知。1.1.4 起不再为测延迟构造 Steam 身份或查询 Steam Messages 会话。
+![四人装备大厅：本机收发速率、队友的游戏估值和探针往返上限](https://raw.githubusercontent.com/hawchou1995/conflictmodlist/v1.1.10/docs/lobby-network.png)
 
-本机速率区分游戏载荷和整机网卡。不能确认游戏计数时不填零；若有网卡采样，则单独标注为整机收发（包含其他程序），不会作为 GTFO 流量报告给队友。
+上图为旧版实机画面。当前版本不再显示本机栏底部的「延迟 -- 抖动 -- 丢包 --」；各条连接的读数仍在对应队友栏。
 
-同装客户端通过独立成员字段互报，无需房主转发。合作探针的往返包含双方轮询等待：界面显示链路可能范围和应用层波动，并将缺收/缺发限定为探针缺号，不等同于游戏包丢包。没有足够样本、没有会话和报告过期不填零。不向未声明支持的玩家发探针，不用聊天或地图标记测速。
+队友栏只显示一个往返延迟。**往返估值**来自游戏缓存的正值 `SNet_Player.Ping`；游戏不提供采样时间，数字不变不代表刚刚又测了一次。**往返上限**来自合作探针回声：例如「往返上限 45 ms」不是最低 0、最高 45 的历史区间，也不拆成两个单程延迟。1.1.4 起不再为测延迟构造 Steam 身份或查询 Steam Messages 会话。
 
-显示依据与取舍见[网络测量说明](https://github.com/hawchou1995/conflictmodlist/blob/v1.1.8/docs/network-research.md)。[多人复测清单](https://github.com/hawchou1995/conflictmodlist/blob/v1.1.8/docs/live-check.md) 区分单客机、双客机和混装。
+本机栏显示收发速率、采样时间和状态，不列延迟、波动或探针缺号；这些读数属于本机与某位队友之间的连接，请看对应的队友栏，房主和客机都一样。本机速率区分游戏载荷和整机网卡。不能确认游戏计数时不填零；若有网卡采样，则单独标注为整机收发（包含其他程序），不会作为 GTFO 流量报告给队友。
+
+「无近期兼容报告」只说明本机没有收到仍然有效的报告，不能据此判断队友没装模组。「已收报告·探针不可用」表示收到了报告，但当前没有可用的探针通道；「等待探针回声」表示通道可用，还没有可用的回声。波动至少需要两个有效往返样本，包含轮询等待；缺收/缺发只统计探针缺号，不是游戏丢包率。能确定的方向单独显示，测得的 `0%` 不等于未知。互报不需要房主转发，也不会为未确认支持的队友增加探针流量。
+
+显示依据与取舍见[网络测量说明](https://github.com/hawchou1995/conflictmodlist/blob/v1.1.10/docs/network-research.md)。[多人复测清单](https://github.com/hawchou1995/conflictmodlist/blob/v1.1.10/docs/live-check.md) 区分单客机、双客机和混装。
 
 ## 颜色和筛选
 

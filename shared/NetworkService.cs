@@ -30,7 +30,7 @@ internal sealed class PayloadMeter
 internal interface INetworkIO
 {
     NetworkRoster Roster();
-    (int Route, int Estimate) Inspect(ulong peer, bool compatible); // one state query: legacy for cooperating clients; passive Steam Messages or game fallback otherwise
+    (int Route, int Estimate) Inspect(ulong peer, bool compatible); // active legacy route for cooperating clients; otherwise cached game Ping only
     // Cumulative game payload bytes. Source == None means the counter cannot see the game transport
     // at all, so its numbers must never be presented as a measured zero.
     NetworkTotal PayloadTotals();
@@ -171,7 +171,7 @@ internal sealed class NetworkService
         nextDrain = now+(open ? 0.05 : 0.20);
         double serverNow = sampledServerTime + (now-sampled);
         for (int i=0; i<4 && io.Receive(out ulong author,out var bytes); ++i)
-            if (peers.TryGetValue(author,out var p) && p.Edge.Route != 0 && p.Report != null && now <= p.Expires && NetworkWire.Decode(bytes,out var msg) &&
+            if (peers.TryGetValue(author,out var p) && p.Edge.Route is >= 1 and <= 4 && p.Report != null && now <= p.Expires && NetworkWire.Decode(bytes,out var msg) &&
                 msg.Issued > 0 && serverNow-msg.Issued is >= -1 and <= NetworkWire.Ttl &&
                 msg.Lobby == scope.Lobby && msg.Session == scope.Session && msg.ToEpoch == epoch && msg.FromEpoch == p.Epoch)
                 p.Link.Receive(msg,now);
@@ -197,6 +197,20 @@ internal sealed class NetworkService
     private static string Num(double value, string format) => value.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
     private string Ago(double age) => age < 100 ? $"{Num(age,"0.00")} 秒前" : age < 6000 ? $"{Num(age/60,"0.0")} 分前" : $"{Num(age/3600,"0.0")} 时前";
     private string Stamp() => $"采样 #{sampleSeq}（窗 {Num(window,"0.0")} 秒）· {Ago(now-sampled)}";
+
+    private static string Ms(int n) => n < 0 ? "未知" : $"{n} ms";
+    private static string Pct(int n) => n < 0 ? "未知" : Num(n/10.0,"0.#")+"%";
+    private static string RoundTrip(NetworkEdge e) => e.Route == 0 || e.Rtt < 0 ? "往返 未知" : e.Route is 1 or 2
+        ? $"往返上限 {e.Rtt+1} ms" // polling adds delay; +1 covers rounding the echoed hold and the residual
+        : $"往返估值 {Ms(e.Rtt)}";
+    private string ProbeNote(Peer peer, NetworkEdge e)
+    {
+        if (peer.Report == null || now > peer.Expires)
+            return peer.Expires > 0 && now > peer.Expires ? "队友报告已过期" : "无近期兼容报告";
+        if (e.Peer == 0 && peer.Edge.Route != 0) return "探针读数已过期";
+        if (e.Route is 0 or 6) return "已收报告·探针不可用";
+        return e.Route is 3 or 4 || (e.Route is 1 or 2 && e.Rtt < 0) ? "等待探针回声" : "";
+    }
 
     internal string[] Lines(ulong selected, Func<ulong,string> name)
     {
@@ -242,22 +256,15 @@ internal sealed class NetworkService
         {
             var e = Array.Find(edges,x => x.Peer == id);
             if (e.Peer != 0 && now - (local ? sampled : observer!.ReportAt) + e.Age > NetworkWire.Ttl) e = default;
-            string path = e.Route switch {1 => "直连", 2 => "中继", 3 => "直连·游戏估值", 4 => "中继·游戏估值", 5 => "消息会话", 6 => "游戏估值", _ => "不可观测"};
-            string ms(int n) => n < 0 ? "未知" : $"{n} ms";
-            string loss(int n) => n < 0 ? "未知" : $"{n/10.0:0.#}%";
-            if (e.Route is 3 or 4 or 6) { lines.Add($"参考 {Name(id)}：游戏估值 {e.Rtt} ms（采样时间未知）"); continue; }
-            if (e.Route is 1 or 2 && e.Rtt >= 0)
-            {
-                // No receive timestamp in the legacy API. Local polling delay cannot be subtracted reliably.
-                // +1 ms covers rounding of both the echoed residence time and the final value.
-                lines.Add($"→ {Name(id)}（{path}探针） 往返 0–{e.Rtt+1} ms");
-                lines.Add($"应用波动 {ms(e.Jitter)}　缺收 {loss(e.Rx)} / 缺发 {loss(e.Tx)}");
-                continue;
-            }
-            lines.Add($"→ {Name(id)}（{path}） 往返 {ms(e.Peer == 0 ? -1 : e.Rtt)}");
-            if (e.Peer != 0 && e.Route != 0) lines.Add($"抖动 {(e.Rtt >= 0 && e.Jitter < 0 && e.Route is 1 or 2 or 5 ? "待采样" : ms(e.Jitter))}　缺收 {loss(e.Rx)} / 缺发 {loss(e.Tx)}");
+            bool probe = e.Route is >= 1 and <= 4;
+            string path = e.Route switch {1 => "直连探针", 2 => "中继探针", 3 => "直连探针·游戏缓存", 4 => "中继探针·游戏缓存", 5 => "消息会话", 6 => "游戏缓存", _ => "不可观测"};
+            if (e.Route is 3 or 4 or 6) path += "·采样时间未知";
+            string note = local ? ProbeNote(peers[id],e) : "";
+            if (note.Length > 0) path += "·"+note;
+            lines.Add($"→ {Name(id)}（{path}） {RoundTrip(e)}");
+            if (probe || e.Route == 5) lines.Add($"{(probe ? "应用波动" : "抖动")} {(e.Jitter < 0 ? "待采样" : Ms(e.Jitter))}　缺收 {Pct(e.Rx)} / 缺发 {Pct(e.Tx)}");
         }
-        lines.Add("探针链路往返仅知范围；应用波动包含轮询；缺号不等于游戏丢包。");
+        lines.Add("探针往返显示上限，应用波动包含轮询；探针缺号不等于游戏丢包。");
         return lines.ToArray();
     }
 
@@ -267,13 +274,10 @@ internal sealed class NetworkService
     // only, never a third party's perspective and never the peer's self-reported rates.
     internal string SlotText(ulong id, bool local, bool bot)
     {
-        const string MissingLinkMetrics = "延迟 -- 抖动 -- 丢包 --";
-        if (bot) return "BOT · 网络\n无独立网络连接\n" + MissingLinkMetrics;
+        if (bot) return "BOT · 网络\n无独立网络连接\n延迟 -- 抖动 -- 丢包 --";
         var lines = new List<string>();
         bool own = local || (id != 0 && id == scope.Self);
-        string ms(int n) => n < 0 ? "未知" : $"{n} ms";
-        string pct(int n) => n < 0 ? "未知" : Num(n/10.0,"0.#")+"%";
-        string loss(NetworkEdge e) => e.Rx < 0 && e.Tx < 0 ? "缺收/缺发 未知" : $"缺收 {pct(e.Rx)}　缺发 {pct(e.Tx)}";
+        string loss(NetworkEdge e) => e.Rx < 0 && e.Tx < 0 ? "缺收/缺发 未知" : $"缺收 {Pct(e.Rx)}　缺发 {Pct(e.Tx)}";
         // One row per direction: a real sub-KiB/s rate keeps its own B/s unit instead of rounding to a
         // measured 0, and neither row grows past the compact width.
         string flow(int n) => n < 0 ? "未知" : n == 0 ? "0 KiB/s" : n < 1024 ? $"{n} B/s" : $"{Num(n/1024.0, n < 1_048_576 ? "0.#" : "0")} KiB/s";
@@ -284,8 +288,7 @@ internal sealed class NetworkService
             lines.Add($"收 {flow(host ? hostRx : rx)}");
             lines.Add($"发 {flow(host ? hostTx : tx)}");
             lines.Add(scope.Self == 0 ? "大厅名单未就绪" : fresh ? $"采样 #{sampleSeq} · {Ago(now-sampled)}" : $"采样 {Ago(now-sampled)}（过期）");
-            lines.Add(MissingLinkMetrics);
-            // One status row keeps the card at six lines: coverage first, then peer availability.
+            // Coverage first, then peer availability. Link metrics belong on the remote seats.
             var notes = new List<string>();
             if (host) notes.Add(hostRx < 0 || hostTx < 0 ? "网卡待采样" : "游戏计数未确认");
             else if (!observable) notes.Add("计数未确认");
@@ -300,41 +303,20 @@ internal sealed class NetworkService
         var edge = peer.Edge;
         bool stale = edge.Peer != 0 && now-sampled+edge.Age > NetworkWire.Ttl;
         if (edge.Peer == 0 || stale) edge = default; // an expired sample never reads as a measurement
-        bool confirmed = peer.Report != null && now <= peer.Expires;
         lines.Add(edge.Route switch
         {
-            1 => "本机→直连探针", 2 => "本机→中继探针", 3 => "本机→直连估值",
-            4 => "本机→中继估值", 5 => "本机→消息会话", 6 => "本机→游戏估值", _ => "本机→未测得",
+            1 => "本机: 直连探针", 2 => "本机: 中继探针", 3 => "直连探针·缓存时间未知",
+            4 => "中继探针·缓存时间未知", 5 => "本机: 消息会话", 6 => "游戏缓存·采样时间未知", _ => "本机: 未测得",
         });
-        if (edge.Route == 0)
+        lines.Add(RoundTrip(edge));
+        if (edge.Route is >= 1 and <= 5)
         {
-            lines.Add("往返 未知");
-            lines.Add(confirmed ? "本机探针未通" : "未确认，无共享报告");
-            if (stale) lines.Add("测量已过期");
-            return Join(lines);
+            lines.Add(edge.Jitter < 0 ? "波动 待采样" : $"波动 {Ms(edge.Jitter)}");
+            lines.Add(loss(edge)); // Probe gaps can be known before the first usable RTT echo.
         }
-        if (edge.Route is 1 or 2)
-        {
-            // +1 ms covers rounding of the echoed residence time and the reported value.
-            lines.Add(edge.Rtt >= 0 ? $"往返 0–{edge.Rtt+1} ms" : "往返 未知");
-            lines.Add(edge.Jitter < 0 ? "波动 待采样" : $"波动 {ms(edge.Jitter)}");
-            lines.Add(loss(edge));
-            if (edge.Rtt < 0) lines.Add("等待有效回声");
-            else if (!confirmed) lines.Add("报告已过期（缓存）");
-            return Join(lines);
-        }
-        lines.Add($"往返 {ms(edge.Rtt)}（估）");
-        if (edge.Route == 5)
-        {
-            lines.Add(edge.Jitter < 0 ? "波动 待采样" : $"波动 {ms(edge.Jitter)}");
-            lines.Add("缺收/缺发 未知");
-            if (!confirmed) lines.Add("未确认，仅 Steam 估值");
-        }
-        else
-        {
-            lines.Add("波动/探针缺失 未知");
-            if (!confirmed) lines.Add("未确认，仅游戏内估值");
-        }
+        else lines.Add("波动/探针缺号 未知");
+        string note = ProbeNote(peer,edge);
+        if (note.Length > 0) lines.Add(note);
         return Join(lines);
     }
     private static int Columns(string s)

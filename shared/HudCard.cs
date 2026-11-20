@@ -6,7 +6,7 @@ namespace TeamModVersions;
 internal static class HudCard
 {
     internal const int Rows = 5; // source/age + game payload + at most three directed edges
-    internal const string Legend = "队伍网络  |  进程 P2P 载荷 KiB/s（不含探针）  |  往返 / 波动 ms：探针为范围，应用波动含轮询  |  探针缺收 / 缺发 %  |  — 未知";
+    internal const string Legend = "队伍网络  |  进程 P2P 载荷 KiB/s（不含探针）  |  往返 / 波动 ms：探针报往返上限，应用波动含轮询  |  探针缺收 / 缺发 %  |  — 未知";
     internal static int Fill(string[] lines, bool local, string[,] cells, int card)
     {
         int row = 2;
@@ -20,10 +20,9 @@ internal static class HudCard
                      (!local && line.StartsWith("该端接收 ", StringComparison.Ordinal)))
                 cells[card, 1] = "载荷  " + line.Replace("该端", "").Replace("接收", "收").Replace("发送", "发")
                     .Replace(" KiB/s", "").Replace("未知", "—");
-            else if (line.StartsWith("参考 ", StringComparison.Ordinal) && row < Rows) cells[card,row++] = line;
             else if (line.StartsWith("→ ", StringComparison.Ordinal) && row < Rows)
             {
-                string pathAndRtt = line.Replace("（", " ").Replace("） 往返 ", "    ").Replace(" ms", "").Replace("未知", "—");
+                string pathAndRtt = line.Replace("（", " ").Replace("） ", "    ").Replace(" ms", "");
                 string rest = "/—    —/—";
                 if (i + 1 < lines.Length && (lines[i + 1].StartsWith("抖动 ", StringComparison.Ordinal) || lines[i+1].StartsWith("应用波动 ",StringComparison.Ordinal)))
                     rest = lines[++i].Replace("应用波动 ", "/应用 ").Replace("抖动 ", "/").Replace(" ms", "").Replace("　缺收 ", "    ")

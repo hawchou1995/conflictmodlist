@@ -82,7 +82,7 @@ internal sealed class TeamNetwork
             // Joining unconfirmed peers must not construct a SteamNetworkingIdentity or query Messages.
             if (!compatible) return NetworkLink.CachedEstimate(ping);
             if (!SteamNetworking.GetP2PSessionState(new CSteamID(peer),out var state) ||
-                state.m_bConnectionActive == 0 || state.m_eP2PSessionError != 0) return (0,-1);
+                state.m_bConnectionActive == 0 || state.m_eP2PSessionError != 0) return NetworkLink.CachedEstimate(ping);
             // Legacy state has neither an HSteamNetConnection nor RTT/loss/rates. Never read its address fields.
             return (state.m_bUsingRelay == 0 ? 1 : 2,ping);
         }

@@ -30,7 +30,7 @@ SNet.Slots.Players[0]=null;Frame();Check(Visible().Length==3 && !bot.gameObject.
 hud.Clear();Check(Visible().Length==0 && original.text=="Rundown watermark" && original.gameObject.activeSelf,"page exit releases clones only");
 Frame();Check(Visible().Length==3,"page reopen rebuilds once");hud.Clear();
 Console.WriteLine("PASS native watermark clone, four occupied pillars, no generic inventory lookup, per-seat intro, 2px gap, motion, button loss, Esc fallback, vacancy and cleanup");
-string[] samples={"本机 · P2P\n收 未知\n发 640 B/s\n采样 #12 · 0.42 秒前\n延迟 -- 抖动 -- 丢包 --\n无共享真人", "队友\n本机→游戏估值\n往返 44 ms（估）\n波动/探针缺失 未知", "BOT · 网络\n无独立网络连接\n延迟 -- 抖动 -- 丢包 --", "整机网卡 · 非 P2P\n收 0 KiB/s\n发 1.2 KiB/s\n采样 #28 · 0.10 秒前\n延迟 -- 抖动 -- 丢包 --\n游戏计数未确认"};
+string[] samples={"本机 · P2P\n收 未知\n发 640 B/s\n采样 #12 · 0.42 秒前\n无共享真人", "队友\n游戏缓存·采样时间未知\n往返估值 44 ms\n波动/探针缺号 未知\n无近期兼容报告", "BOT · 网络\n无独立网络连接\n延迟 -- 抖动 -- 丢包 --", "整机网卡 · 非 P2P\n收 0 KiB/s\n发 1.2 KiB/s\n采样 #28 · 0.10 秒前\n游戏计数未确认"};
 var cards=samples.Select((s,i)=>FieldTerminalTheme.Format(s,i,i==2)).ToArray();
 Check(Plain(cards[0]).Contains("RX  收   未知\nTX  发   640 B/s") && Plain(cards[3]).Contains("非 P2P\nRX  收   0 KiB/s"),"unknown, idle and host scope survive styling");
 Check(!cards[2].Contains($"#{FieldTerminalTheme.Accent:X6}") && !FieldTerminalTheme.Format("<sprite=0>",0,false).Contains("<sprite"),"neutral BOT and no source markup");
