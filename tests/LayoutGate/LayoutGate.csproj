@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework><OutputType>Exe</OutputType><Nullable>enable</Nullable>
+    <DefineConstants>$(DefineConstants);LAYOUT_GATE</DefineConstants>
+    <!-- Keep nested gate outputs harmless for the parent OfflineTests project's recursive Compile. -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo><GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+  </PropertyGroup>
+  <ItemGroup><Using Include="System" /><Using Include="System.Collections.Generic" /><Compile Include="../../shared/ButtonLayout.cs;../../shared/SlotHudLayout.cs" /></ItemGroup>
+</Project>

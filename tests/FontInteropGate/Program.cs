@@ -103,9 +103,10 @@ try
 {
     var plugin = AssemblyLoadContext.Default.LoadFromAssemblyPath(pluginPath);
     var driver = plugin.GetType("TeamModVersions.TeamVersionsDriver", throwOnError: true)!;
-    var callers = driver.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
-                        .Cast<MethodBase>()
-                        .Concat(driver.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static))
+    var hud = plugin.GetType("TeamModVersions.LobbyNetworkHud", throwOnError: true)!;
+    var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+    var callers = new[]{driver,hud}.Concat(hud.GetNestedTypes(BindingFlags.NonPublic))
+                        .SelectMany(t => t.GetMethods(flags).Cast<MethodBase>().Concat(t.GetConstructors(flags)))
                         .OrderBy(m => m.Name, StringComparer.Ordinal)
                         .ToList();
     foreach (var caller in callers)

@@ -293,7 +293,7 @@ foreach (var type in injected)
             Check(false, $"{type.Name}: 注册签名有风险 —— {h}");
 
     // Unity 需要的消息回调必须仍然注册（ClassInjector 把它们放进 il2cpp 方法表，Unity 按名字找）。
-    foreach (var callback in new[] { "Update", "OnGUI" })
+    foreach (var callback in new[] { "Update", "LateUpdate", "OnGUI" })
     {
         bool registered = eligible.Any(m => m.Name == callback && m.ReturnType == typeof(void) && m.GetParameters().Length == 0);
         Check(registered, $"{type.Name}: Unity 消息回调仍进元数据 Void {callback}()");
@@ -304,12 +304,12 @@ foreach (var type in injected)
     Check(called.Count > 0, $"{type.Name}: 程序集内对驱动的 managed 调用点集合非空（{called.Count}）");
     foreach (var name in called.Where(n => !n.StartsWith('.') && n != "Finalize"))
     {
-        var hit = declared.FirstOrDefault(m => m.Name == name);
+        var hit = declared.FirstOrDefault(m => m.Name == name) ?? type.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).FirstOrDefault(m => m.Name == name);
         Check(hit != null && !hit.IsAbstract, $"{type.Name}: managed 入口仍可调用（程序集内有调用点）{name}");
     }
 
-    // 委托目标（DelegateSupport.ConvertDelegate）：该构建里有这个回调就必须保持签名；旧构建没有该项不判红。
-    foreach (var (name, paramType) in new[] { ("Toggle", "System.Int32"), ("CloseFromPress", "System.Int32") })
+    // 入口接收实名单选择的玩家 ID；旧的 int 原生关闭代理已移除。
+    foreach (var (name, paramType) in new[] { ("Toggle", "System.UInt64"), ("CloseFromPress", "System.Int32") })
     {
         var hit = declared.FirstOrDefault(m => m.Name == name);
         if (hit == null)

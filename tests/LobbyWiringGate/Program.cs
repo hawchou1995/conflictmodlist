@@ -5,13 +5,8 @@ using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using FontInteropGate;
 
-// 大厅接线闸门：直接检查生产 conflictmodlist.dll 的 IL 调用点，证明
-//   1) 开表 / 关闭都真的挂到大厅 GuiLayer 上（m_guiLayer + AddRectComp，且模板是 GameObject 那一版重载），
-//      并用大厅原生 CM_Item 的 OnBtnPressCallback 分发；
-//   2) 关闭落点走真实菜单相机投影（WorldSpace / 取不到 Canvas 也不禁用），命中盒按实测比例设置；
-//   3) 表头名字取大厅原生 TMP 已排版字符并按段绘制（richText 关闭）；
-//   4) PlaceClose 与 OnGUI 共用 PanelAnchor.PanelShown 可见性判定（隐藏态不得留命中区）；
-//   5) 没有退化成全局原始输入或抢系统光标。
+// 从编译产物检查常显网络 HUD、逐玩家模组入口、同源轨道/命中/光标和原生输入。
+// 正向检查再配合禁止网络主动探测/重复消费输入的断言，不用生产方法名的存在代替接线。
 // 能力边界：只证明“编译产物里确实调用了这些 API”，不证明大厅真的点到、位置真的对齐；那部分只能实机验证。
 // 用法: LobbyWiringGate <plugin.dll> [--calls <子串>] [--sig <方法名>]
 
@@ -33,7 +28,7 @@ if (args.Length >= 3 && args[1] == "--sig")
     return 0;
 }
 
-var calls = new List<(string Caller, string Callee)>();
+var calls = new List<(string Caller, int Offset, string Callee)>();
 var methods = new HashSet<string>(StringComparer.Ordinal);
 try
 {
@@ -50,8 +45,8 @@ try
             string label = $"{typeName}.{md.GetString(method.Name)}";
             methods.Add(label);
             if (method.RelativeVirtualAddress == 0) continue;
-            foreach (var token in IlCalls.CallTokens(pe.GetMethodBody(method.RelativeVirtualAddress).GetILBytes() ?? Array.Empty<byte>()))
-                calls.Add((label, Describe(md, token)));
+            foreach (var site in IlCalls.CallSites(pe.GetMethodBody(method.RelativeVirtualAddress).GetILBytes() ?? Array.Empty<byte>()))
+                calls.Add((label, site.Offset, Describe(md, site.Token)));
         }
     }
 }
@@ -76,46 +71,47 @@ if (args.Length >= 3 && args[1] == "--calls")
 const string Driver = "TeamModVersions.TeamVersionsDriver.";
 var required = new (string Caller, string Callee)[]
 {
-    // 开表：大厅 GuiLayer 上挂原生 CM_Item，模板 = 玩家栏自带的邀请按钮
-    (Driver + "PlaceButton", "CellMenu.CM_PageBase::get_m_guiLayer"),
-    (Driver + "PlaceButton", "GuiLayer::AddRectComp"),
-    (Driver + "PlaceButton", "CellMenu.CM_PlayerLobbyBar::get_m_inviteButton"),
-    (Driver + "PlaceButton", "CellMenu.CM_PlayerLobbyBar::get_m_hasPlayerRoot"),
-    (Driver + "PlaceButton", "CellMenu.CM_PlayerLobbyBar::get_m_player"),
-    (Driver + "PlaceButton", "CellMenu.CM_Item::set_ID"),
-    (Driver + "PlaceButton", "CellMenu.CM_Item::set_OnBtnPressCallback"),
-    (Driver + "PlaceButton", "Il2CppInterop.Runtime.DelegateSupport::ConvertDelegate"),
-    // 关闭：同样挂在该 GuiLayer 上，模板 = 自己的开表按钮（GameObject）
-    (Driver + "CreateClose", "CellMenu.CM_PageBase::get_m_guiLayer"),
-    (Driver + "CreateClose", "GuiLayer::AddRectComp"),
-    (Driver + "CreateClose", "UnityEngine.Component::get_gameObject"),
-    (Driver + "CreateClose", "CellMenu.CM_Item::set_ID"),
-    (Driver + "CreateClose", "CellMenu.CM_Item::set_OnBtnPressCallback"),
-    (Driver + "CreateClose", "Il2CppInterop.Runtime.DelegateSupport::ConvertDelegate"),
-    (Driver + "CreateClose", "TeamModVersions.TeamVersionsDriver::HideVisuals"),
-    (Driver + "HideVisuals", "UnityEngine.GameObject::GetComponentsInChildren"),
-    (Driver + "HideVisuals", "UnityEngine.Renderer::set_enabled"),
-    (Driver + "HideVisuals", "UnityEngine.Behaviour::set_enabled"),
-    // 关闭落点：真实菜单相机 + 屏幕点到父平面（WorldSpace / 取不到 Canvas 也走这条路，不因 RenderMode 禁用）
-    (Driver + "MenuCamera", "CellMenu.CM_PageBase::get_Camera"),
-    (Driver + "MenuCamera", "UnityEngine.Canvas::get_worldCamera"),
-    (Driver + "MenuCamera", "UnityEngine.Camera::get_main"),
-    (Driver + "TryProject", "UnityEngine.RectTransformUtility::ScreenPointToWorldPointInRectangle"),
-    (Driver + "TryProject", "UnityEngine.Transform::InverseTransformVector"),
-    (Driver + "TryProject", "TeamModVersions.PanelAnchor::LocalPerPixel"),
-    (Driver + "PlaceAt", "UnityEngine.Canvas::get_renderMode"),
-    (Driver + "PlaceAt", "UnityEngine.Canvas::get_scaleFactor"),
-    (Driver + "PlaceAt", "TeamModVersions.PanelAnchor::CanvasOffset"),
-    (Driver + "PlaceAt", "TeamModVersions.PanelAnchor::Center"),
-    (Driver + "PlaceAt", "UnityEngine.Transform::set_position"),
-    (Driver + "ApplyHitBox", "CellMenu.CM_Item::get_m_collider"),
-    (Driver + "ApplyHitBox", "UnityEngine.BoxCollider2D::set_size"),
-    (Driver + "ApplyHitBox", "TeamModVersions.PanelAnchor::BoxSize"),
-    (Driver + "ApplyHitBox", "TeamModVersions.PanelAnchor::IsSane"),
-    // 可见性：PlaceClose 与 OnGUI 必须共用同一条判定（隐藏态不留命中区）
+    (Driver + "PlaceButton", "TeamModVersions.LobbyButtons::Update"),
+    ("TeamModVersions.LobbyButtons.Update", "TeamModVersions.LobbyButtons::Reconcile"),
+    ("TeamModVersions.LobbyButtons.Reconcile", "CellMenu.CM_PlayerLobbyBar::get_m_clothesButton"),
+    ("TeamModVersions.LobbyButtons.Player", "SNetwork.SNet_Player::get_IsBot"),
+    ("TeamModVersions.LobbyButtons.Build", "GuiLayer::AddRectComp"),
+    ("TeamModVersions.LobbyButtons.Build", "CellMenu.CM_Item::set_OnBtnPressCallback"),
+    ("TeamModVersions.LobbyButtons.Build", "Il2CppInterop.Runtime.DelegateSupport::ConvertDelegate"),
+    (Driver + "LateUpdate", "TeamModVersions.LobbyNetworkHud::Present"),
+    (Driver + "LateUpdate", "TeamModVersions.LobbyNetworkHud::Refresh"),
+    (Driver + "LateUpdate", "TeamModVersions.TeamVersionsDriver::PlaceButton"),
+    ("TeamModVersions.LobbyNetworkHud.Refresh", "CellMenu.CM_PlayerLobbyBar::get_m_hasPlayerRoot"),
+    ("TeamModVersions.LobbyNetworkHud.Attach", "UnityEngine.Object::Instantiate"),
+    ("TeamModVersions.LobbyNetworkHud.Refresh", "CellMenu.CM_PageLoadout::get_m_playerLobbyBars"),
+    ("TeamModVersions.LobbyNetworkHud.Refresh", "SNetwork.SNet_PlayerSlotManager::GetPlayerInSlot"),
+    ("TeamModVersions.LobbyNetworkHud.Refresh", "SNetwork.SNet_Player::get_IsBot"),
+    ("TeamModVersions.LobbyNetworkHud.Refresh", "TeamModVersions.TeamNetwork::SlotText"),
+    ("TeamModVersions.LobbyNetworkHud.Present", "TeamModVersions.LobbyButtons::CompareRect"),
+    ("TeamModVersions.LobbyNetworkHud.Present", "PUI_Watermark::get_m_watermarkText"),
+    ("TeamModVersions.LobbyNetworkHud.Present", "TeamModVersions.LobbyNetworkHud::Attach"),
+    ("TeamModVersions.LobbyNetworkHud.Attach", "TMPro.TextMeshPro::.ctor"),
+    (Driver + "Update", "TeamModVersions.TeamNetwork::Tick"),
+    (Driver + "OnGUI", "TeamModVersions.TeamVersionsDriver::DrawPanelCursor"),
+    (Driver + "Table", "TeamModVersions.TeamVersionsDriver::DrawRail"),
+    (Driver + "HandleMouse", "TeamModVersions.RailDrag::Sample"),
+    (Driver + "ResetInput", "TeamModVersions.RailDrag::Reset"),
+    // 关闭：旧透明原生命中区已移除；关闭只由 HandleMouse 的“大厅光标 + 主按键边沿”决定
+    (Driver + "HandleMouse", "TeamModVersions.PressOwnership::Arm"),
+    (Driver + "HandleMouse", "TeamModVersions.TeamVersionsDriver::Close"),
+    (Driver + "HandleMouse", "TeamModVersions.WheelRouter::Suspend"),
+    (Driver + "TryButton", "TeamModVersions.TeamVersionsDriver::ReadPhysicalButton"),
+    (Driver + "TryButton", "CellMenu.CM_PageBase::get_MainButtonStatus"),
+    (Driver + "ReadPhysicalButton", "UnityEngine.Input::GetMouseButton"),
+    // 关表那一次按压的归属：判定在驱动侧，前缀只跳过大厅自己的按压分发
+    (Driver + "SuppressLobbyPress", "TeamModVersions.PressOwnership::ShouldSuppress"),
+    (Driver + "SuppressLobbyPress", "TeamModVersions.TeamVersionsDriver::SamePage"),
+    // 可见性：OnGUI 与按压 / 滚轮命中共用同一条判定（隐藏态不留命中区）
     (Driver + "PanelVisible", "TeamModVersions.PanelAnchor::PanelShown"),
-    (Driver + "PlaceClose", "TeamModVersions.TeamVersionsDriver::PanelVisible"),
     (Driver + "OnGUI", "TeamModVersions.TeamVersionsDriver::PanelVisible"),
+    // 换页 / 卸载必须显式关表（重建入口不再顺带关表）
+    (Driver + "SetPage", "TeamModVersions.TeamVersionsDriver::Close"),
+    (Driver + "Shutdown", "TeamModVersions.TeamVersionsDriver::Close"),
     // 表头名字/颜色：按 ID 取大厅原生名字控件（TMP 已排版字符优先）
     (Driver + "ResolveNames", "CellMenu.CM_PageLoadout::get_m_playerLobbyBars"),
     (Driver + "ResolveNames", "CellMenu.CM_PlayerLobbyBar::get_m_nickText"),
@@ -140,24 +136,92 @@ var required = new (string Caller, string Callee)[]
     (Driver + "HandleKeys", "UnityEngine.Event::Use"),
     (Driver + "HandleKeys", "TeamModVersions.PanelModel::Scroll"),
     (Driver + "HandleKeys", "TeamModVersions.PanelModel::MaxScroll"),
-    (Driver + "Table", "UnityEngine.GUI::BeginScrollView"),
+    // 清单：BeginGroup 裁切（不再用 BeginScrollView 自带的 IMGUI 滚轮），滚动量来自 Update 里的滚动状态
+    (Driver + "Table", "UnityEngine.GUI::BeginGroup"),
+    (Driver + "Table", "UnityEngine.GUI::EndGroup"),
     (Driver + "Table", "TeamModVersions.PanelModel::FirstVisible"),
     (Driver + "Table", "TeamModVersions.NameMarkup::Resolve"),
+    (Driver + "Table", "TeamModVersions.TeamVersionsDriver::CloseLocalRect"),
+    (Driver + "Table", "TeamModVersions.PanelHit::Inside"),
+    // 实体鼠标：大厅页自己的光标 / 主按键 / 滚轮（同一事件源）；渲染矩形与命中矩形同源
+    (Driver + "Update", "TeamModVersions.TeamVersionsDriver::HandleMouse"),
+    (Driver + "HandleMouse", "TeamModVersions.TeamVersionsDriver::PanelVisible"),
+    (Driver + "HandleMouse", "TeamModVersions.TeamVersionsDriver::SampleCursor"),
+    (Driver + "HandleMouse", "TeamModVersions.TeamVersionsDriver::CloseButtonRect"),
+    (Driver + "HandleMouse", "TeamModVersions.TeamVersionsDriver::ListScreenRect"),
+    (Driver + "HandleMouse", "TeamModVersions.TeamVersionsDriver::TryButton"),
+    (Driver + "HandleMouse", "TeamModVersions.ClosePressGate::Sample"),
+    (Driver + "HandleMouse", "TeamModVersions.PanelHit::Inside"),
+    (Driver + "HandleMouse", "TeamModVersions.PanelModel::Scroll"),
+    (Driver + "HandleMouse", "TeamModVersions.TeamVersionsDriver::ReadNativeScroll"),
+    (Driver + "HandleMouse", "TeamModVersions.TeamVersionsDriver::ReadPhysicalWheel"),
+    (Driver + "HandleMouse", "TeamModVersions.WheelRouter::Sample"),
+    (Driver + "HandleMouse", "TeamModVersions.TeamVersionsDriver::LogInput"),
+    (Driver + "HandleMouse", "TeamModVersions.TeamVersionsDriver::ResetInput"),
+    (Driver + "SampleCursor", "CellMenu.CM_PageBase::get_CursorWorldPosition"),
+    (Driver + "SampleCursor", "UnityEngine.Camera::WorldToScreenPoint"),
+    (Driver + "SampleCursor", "TeamModVersions.PointerMath::TryGui"),
+    (Driver + "SampleCursor", "TeamModVersions.TeamVersionsDriver::PointerCamera"),
+    // 相机：GuiLayer 的菜单相机优先，CM_PageBase.Camera 只作后备（参考案实测为空）
+    (Driver + "PointerCamera", "MainMenuGuiLayer::get_m_menuCamera"),
+    (Driver + "PointerCamera", "CameraController::get_m_camera"),
+    (Driver + "PointerCamera", "CellMenu.CM_PageBase::get_Camera"),
+    ("TeamModVersions.LobbyButtons.Reconcile", "TeamModVersions.ButtonLayout::Place"),
+    (Driver + "Usable", "UnityEngine.Behaviour::get_isActiveAndEnabled"),
+    (Driver + "TryButton", "CellMenu.CM_PageBase::get_MainButtonStatus"),
+    (Driver + "ReadNativeScroll", "CellMenu.CM_PageBase::get_ScrollInput"),
+    // 物理滚轮：全插件唯一的读取点（只读、不捕获、不抢光标）
+    (Driver + "ReadPhysicalWheel", "UnityEngine.Input::get_mouseScrollDelta"),
+    // 开表 / 关闭 / 换页 / 卸载都必须复位按压与滚轮状态
+    (Driver + "Toggle", "TeamModVersions.TeamVersionsDriver::ResetInput"),
+    (Driver + "Close", "TeamModVersions.TeamVersionsDriver::ResetInput"),
+    (Driver + "SetPage", "TeamModVersions.TeamVersionsDriver::ResetInput"),
 };
 var requiredMethods = new[]
 {
-    Driver + "CloseFromPress", Driver + "Close", Driver + "RemoveClose",
+    Driver + "Close", Driver + "RemoveButton", Driver + "SetPage", Driver + "Shutdown",
     Driver + "ReadNativeName", Driver + "ResolveNames", Driver + "DrawRuns",
-    Driver + "PanelVisible", Driver + "PlaceButton", Driver + "CreateClose",
+    Driver + "PanelVisible", Driver + "PlaceButton",
+    Driver + "HandleMouse", Driver + "SampleCursor", Driver + "PointerCamera", Driver + "TryButton",
+    Driver + "ReadPhysicalButton", Driver + "SuppressLobbyPress", Driver + "SamePage",
+    Driver + "ReadNativeScroll", Driver + "ReadPhysicalWheel", Driver + "ResetInput", Driver + "LogInput",
+    Driver + "Table", Driver + "CloseLocalRect", Driver + "ListLocalRect", Driver + "CloseButtonRect",
 };
 var forbidden = new[]
 {
-    "UnityEngine.Input::GetMouseButtonDown", "UnityEngine.Input::GetMouseButtonUp", "UnityEngine.Input::GetMouseButton",
+    "CellMenu.CM_PlayerLobbyBar::get_m_inventorySlotItems", // live 1.1.5: broken generic TryGetValue stub
+    "UnityEngine.Input::GetMouseButtonDown", "UnityEngine.Input::GetMouseButtonUp",
     "UnityEngine.Input::get_mousePosition", "UnityEngine.Input::GetKeyDown", "UnityEngine.Input::GetKeyUp", "UnityEngine.Input::GetKey",
     "UnityEngine.Input::GetAxis", "UnityEngine.Cursor::set_visible", "UnityEngine.Cursor::set_lockState",
     "UnityEngine.Screen::SetResolution",
+    // 1.1.3: fatal native access violation on lobby join; never execute the old path, even in a test.
+    "TeamModVersions.ExistingSteamSession::Ping", "Steamworks.SteamNetworkingIdentity::SetSteamID64",
+    "Steamworks.SteamNetworkingMessages::GetSessionConnectionInfo",
+    "Steamworks.SteamNetworkingMessages::SendMessageToUser", "Steamworks.SteamNetworkingSockets::ConnectP2P",
+    "Steamworks.SteamMatchmaking::SendLobbyChatMsg",
+    "Steamworks.SteamMatchmaking::SetLobbyData", "Steamworks.SteamNetworkingUtils::GetLocalPingLocation",
+    "Steamworks.SteamNetConnectionInfo_t::get_m_addrRemote", "UnityEngine.Object::FindObjectsOfType",
     // 注：表头名字不开 richText —— 校验方式见 offline tests（只产出“文字+颜色”分段）与
     // DrawRuns 的 GUIStyle::CalcSize/GUI::Label 逐段绘制接线；这里不按 IL 常量判 richText 取值。
+};
+
+// 新契约：不是“禁止一切输入”，而是“输入只允许在一条清晰限定的路径上读取”。
+//   * 物理滚轮 / 物理主键各只允许出现在一个方法里（只读、不捕获、不抢系统光标）；
+//   * IMGUI 的自带滚轮滚动与 IMGUI 按压按钮不允许回到表里（它们会重复消费 / 在 GTFO 大厅里点不到）；
+//   * 重建开表入口不得顺手关掉面板（面板可能正被读）。
+var forbiddenPairs = new (string Caller, string Callee)[]
+{
+    (Driver + "Table", "UnityEngine.GUI::BeginScrollView"),
+    (Driver + "Table", "UnityEngine.GUI::Button"),
+    (Driver + "BuildStyles", "UnityEngine.GUISkin::get_button"),
+    (Driver + "RemoveButton", Driver.TrimEnd('.') + "::Close"),
+};
+// 全插件唯一的读取点：Callee 只允许出现在 Only 这一个方法里
+var singleSite = new (string Callee, string Only)[]
+{
+    ("UnityEngine.Input::get_mouseScrollDelta", Driver + "ReadPhysicalWheel"),
+    ("UnityEngine.Input::GetMouseButton", Driver + "ReadPhysicalButton"),
+    ("Steamworks.SteamNetworking::SendP2PPacket", "SteamIO.Send"),
 };
 
 int failures = 0;
@@ -197,7 +261,38 @@ foreach (var target in forbidden)
 }
 
 Console.WriteLine();
-Console.WriteLine($"summary: calls={calls.Count} required={required.Length + requiredMethods.Length + 1} forbidden={forbidden.Length} failures={failures} -> {(failures == 0 ? "GREEN" : "RED")}");
+Console.WriteLine("== 输入只允许在限定路径读取（不做全局捕获） ==");
+foreach (var (callee, only) in singleSite)
+{
+    var sites = calls.Where(c => c.Callee == callee).Select(c => c.Caller).Distinct().OrderBy(c => c, StringComparer.Ordinal).ToList();
+    bool ok = sites.Count == 1 && sites[0] == only;
+    Console.WriteLine($"{(ok ? "PASS" : "FAIL")} {callee} 只出现在 {only}：{string.Join(", ", sites)}");
+    if (!ok) failures++;
+}
+
+Console.WriteLine();
+Console.WriteLine("== 必须不存在的 IMGUI 滚轮 / IMGUI 按压按钮 ==");
+foreach (var (caller, callee) in forbiddenPairs)
+{
+    int hits = calls.Count(c => c.Caller == caller && c.Callee == callee);
+    Console.WriteLine($"{(hits == 0 ? "PASS" : "FAIL")} {caller} -> {callee}：{hits} 处");
+    if (hits != 0) failures++;
+}
+
+Console.WriteLine();
+Console.WriteLine("== 鼠标每帧采样：必须在 1 Hz 刷新节流之前 ==");
+// 按压边沿与物理滚轮都是“这一帧”的读数：HandleMouse 一旦落进 Update 里的 1 Hz 节流后面，
+// 点击与滚轮就会以 1 次/秒采样（这就是本次热修修的缺陷），因此用 IL 偏移把顺序也钉住。
+var mouseCallSites = calls.Where(c => c.Caller == Driver + "Update" && c.Callee == Driver.TrimEnd('.') + "::HandleMouse").ToList();
+var throttleCallSites = calls.Where(c => c.Caller == Driver + "Update" && c.Callee == "UnityEngine.Time::get_realtimeSinceStartup").ToList();
+string mouseAt = mouseCallSites.Count == 1 ? $"偏移 {mouseCallSites[0].Offset}" : $"缺失或重复（{mouseCallSites.Count} 处）";
+string throttleAt = throttleCallSites.Count == 1 ? $"偏移 {throttleCallSites[0].Offset}" : $"缺失或重复（{throttleCallSites.Count} 处）";
+bool mousePerFrame = mouseCallSites.Count == 1 && throttleCallSites.Count == 1 &&
+    mouseCallSites[0].Offset < throttleCallSites[0].Offset;
+Console.WriteLine($"{(mousePerFrame ? "PASS" : "FAIL")} Update → HandleMouse：{mouseAt}；1 Hz 节流读时间戳：{throttleAt}（前者必须更早）");
+if (!mousePerFrame) failures++;
+Console.WriteLine();
+Console.WriteLine($"summary: calls={calls.Count} required={required.Length + requiredMethods.Length + forbiddenPairs.Length + singleSite.Length + 1} forbidden={forbidden.Length} failures={failures} -> {(failures == 0 ? "GREEN" : "RED")}");
 return failures == 0 ? 0 : 1;
 
 // ---------------------------------------------------------------- helpers

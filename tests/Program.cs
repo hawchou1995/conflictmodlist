@@ -275,3 +275,182 @@ Check(!PanelAnchor.PanelShown(true, true, true, 339f, 660f) && !PanelAnchor.Pane
     "屏幕太小画不出面板：不可见（不留透明关闭区）");
 Check(PanelAnchor.PanelShown(true, true, true, 340f, 220f), "正好达到最小尺寸：可见");
 Check(!PanelAnchor.PanelShown(true, true, true, 2560f, 1440f, 3000f, 220f), "阈值可覆盖（宽不够仍不可见）");
+
+// ---- 实体鼠标路径（大厅光标 → 屏幕点 → 唯一一次 Y 翻转） ----
+Check(PointerMath.TryGui(1820f, 417.5f, 1f, 1440f, out var guiX, out var guiY, out _) &&
+      guiX == 1820f && MathF.Abs(guiY - 1022.5f) < 0.001f, "相机屏幕点只翻一次 Y：1440 高屏上 417.5 → 1022.5");
+Check(PointerMath.TryGui(700f, 700f, 1f, 1440f, out _, out var midY, out _) && MathF.Abs(midY - 740f) < 0.001f,
+    "屏幕中线上下对称（对照，证明翻转不是恒等或双重翻转）");
+Check(!PointerMath.TryGui(10f, 10f, 0f, 1440f, out _, out _, out var behind) && behind.Contains("z<=0", StringComparison.Ordinal),
+    "相机后面的点（z<=0）不产生命中");
+Check(!PointerMath.TryGui(10f, 10f, -1f, 1440f, out _, out _, out _), "z 为负同样不命中");
+Check(!PointerMath.TryGui(float.NaN, 10f, 1f, 1440f, out _, out _, out _) &&
+      !PointerMath.TryGui(10f, float.PositiveInfinity, 1f, 1440f, out _, out _, out _), "非有限投影不命中");
+Check(!PointerMath.TryGui(10f, 10f, 1f, 0f, out _, out _, out _), "屏幕高度不可用时不命中");
+
+// ---- 渲染矩形 = 命中矩形（2560x1440 / 1280x720 / 640x480 三种窗口） ----
+var bigPanel = new ScreenRect((screenW - panelW) * .5f, (screenH - panelH) * .5f, panelW, panelH);
+var bigClose = PanelHit.Offset(bigPanel, panelW - 82f, 13f, 64f, 29f);
+Check(bigClose.X == 1788f && bigClose.Y == 403f && bigClose.Width == 64f && bigClose.Height == 29f,
+    "关闭命中矩形 = 绘制矩形（面板本地 w-82,13,64,29 换到屏幕）");
+Check(PanelHit.Inside(bigClose, 1820f, 417.5f), "关闭矩形中心命中");
+Check(!PanelHit.Inside(bigClose, 1787.9f, 417.5f) && !PanelHit.Inside(bigClose, 1852f, 417.5f),
+    "关闭矩形左右边界外不命中");
+Check(!PanelHit.Inside(bigClose, 1820f, 402.9f) && !PanelHit.Inside(bigClose, 1820f, 432f),
+    "关闭矩形上下边界外不命中");
+Check(!PanelHit.Inside(bigClose, float.NaN, 417.5f), "NaN 光标不算命中");
+Check(PanelHit.Inside(bigClose, 1820f, 404.5f), "关闭矩形顶部内侧命中（上边界包含）");
+
+foreach (var (sw, sh) in new[] { (1280f, 720f), (640f, 480f) })
+{
+    float pw = MathF.Min(1180f, sw - 44f), ph = MathF.Min(660f, sh - 56f);
+    var p = new ScreenRect((sw - pw) * .5f, (sh - ph) * .5f, pw, ph);
+    var c = PanelHit.Offset(p, pw - 82f, 13f, 64f, 29f);
+    Check(PanelAnchor.PanelShown(true, true, true, pw, ph) &&
+          PanelHit.Inside(c, c.X + c.Width * .5f, c.Y + c.Height * .5f) &&
+          !PanelHit.Inside(c, c.X - 1f, c.Y + c.Height * .5f),
+        $"{sw}x{sh}：面板按当前窗口算出关闭矩形，中心命中、左边界外不命中");
+}
+
+// ---- 关闭按压：开表按住不立刻关 / 一次按压只关一次 / 再开再关 / 面板外无副作用 ----
+var gate = new ClosePressGate();
+Check(!gate.Sample(true, true) && gate.Closes == 0, "开表那一下按住的键（首帧即按下）不会立刻把表关掉");
+Check(!gate.Sample(true, true) && gate.Closes == 0, "按住不放不会重复触发");
+Check(!gate.Sample(false, false), "松开本身不触发关闭");
+Check(gate.Sample(true, true) && gate.Closes == 1, "松开后重新按在关闭矩形内：关一次");
+Check(!gate.Sample(true, true) && gate.Closes == 1, "同一次按压按住不放仍然只关一次");
+gate.Reset();
+Check(!gate.Sample(true, true) && gate.Closes == 1, "复位后重新需要一次松开（换页 / 失焦 / 卸载后的状态）");
+Check(!gate.Sample(false, false) && gate.Sample(true, true) && gate.Closes == 2, "再开一次还能再关（关闭/再开循环）");
+
+var drag = new ClosePressGate();
+Check(!drag.Sample(false, false), "先见到松开：武装");
+Check(!drag.Sample(true, false) && drag.Closes == 0, "按在关闭矩形外：不关");
+Check(!drag.Sample(true, true) && drag.Closes == 0, "按住从面板里拖进关闭矩形：不关（只认按下那一刻的光标）");
+Check(!drag.Sample(false, false) && drag.Sample(true, true) && drag.Closes == 1, "松手后重新按在矩形内：关一次");
+
+var blankCursor = new ClosePressGate();
+Check(!blankCursor.Sample(false, false) && !blankCursor.Sample(true, false) && blankCursor.Closes == 0,
+    "光标读不到（inside=false）时空按不关：不用上一帧陈旧命中");
+
+// ---- 滚轮：方向 / 幅度 / 上下限 / 双来源去重 ----
+const float wheelRow = PanelModel.RowHeight, wheelViewport = 510f;
+Check(WheelRouter.Pixels(-1f, wheelRow, wheelViewport) > 0f, "物理滚轮向下（负值）→ 列表向下翻（正像素）");
+Check(WheelRouter.Pixels(1f, wheelRow, wheelViewport) < 0f, "物理滚轮向上（正值）→ 列表向上翻（负像素）");
+Check(MathF.Abs(WheelRouter.Pixels(-1f, wheelRow, wheelViewport) - 3f * wheelRow) < .001f, "一档 = 3 行");
+Check(MathF.Abs(WheelRouter.Pixels(-0.1f, wheelRow, wheelViewport) - 3f * wheelRow) < .001f, "0.1 一档的平台归一成一档");
+Check(MathF.Abs(WheelRouter.Pixels(-99f, wheelRow, wheelViewport) - WheelRouter.MaxNotches * wheelRow * WheelRouter.RowsPerNotch) < .001f,
+    "巨大读数按 MaxNotches 截断（不会一帧甩到底）");
+Check(WheelRouter.Pixels(-1f, wheelRow, 20f) == 20f, "单帧滚轮像素不超过视口");
+Check(WheelRouter.Pixels(0f, wheelRow, wheelViewport) == 0f && WheelRouter.Pixels(float.NaN, wheelRow, wheelViewport) == 0f,
+    "0 / NaN 读数不滚");
+
+var router = new WheelRouter();
+Check(router.Sample(-1f, -1f, wheelRow, wheelViewport) > 0f && router.Source == WheelSource.Native,
+    "同帧双来源：大厅 ScrollInput 优先，不与物理滚轮相加（杜绝加倍）");
+Check(router.Sample(-1f, 0f, wheelRow, wheelViewport) == 0f, "原生读数没变化（保持同值）不会被重复消费");
+Check(router.Sample(0f, -1f, wheelRow, wheelViewport) > 0f && router.Source == WheelSource.Physical,
+    "原生为 0 时物理滚轮兜底");
+Check(router.Sample(0f, 0f, wheelRow, wheelViewport) == 0f && router.Source == WheelSource.None, "没有读数就不滚");
+router.Reset();
+Check(router.Sample(-1f, 0f, wheelRow, wheelViewport) > 0f, "复位后同一原生读数重新可用");
+
+float oneNotchDown = WheelRouter.Pixels(-1f, wheelRow, wheelViewport);
+Check(scrollModel.Scroll(0f, oneNotchDown, wheelViewport) == 3f * wheelRow, "从顶部向下滚一档 = 前进 3 行");
+Check(scrollModel.Scroll(scrollModel.MaxScroll(wheelViewport), oneNotchDown, wheelViewport) == scrollModel.MaxScroll(wheelViewport),
+    "已经在底部再向下滚：停在底部不越界（滚到底）");
+Check(scrollModel.Scroll(0f, WheelRouter.Pixels(1f, wheelRow, wheelViewport), wheelViewport) == 0f, "顶部向上滚不越界");
+Check(PanelModel.Create(new[] { new PlayerColumn(1, "本机", new[] { M("only.one", "唯一插件") }) },
+        showMatches: false, rosterConfirmed: true, notice: null, syncError: false).MaxScroll(wheelViewport) == 0f,
+    "短表（内容比视口矮）滚轮没有可滚空间");
+
+// ---- 面板外无副作用：清单矩形只覆盖表体，面板边距/屏幕角落都不算 ----
+var bigList = PanelHit.Offset(bigPanel, 14f, 113f, panelW - 28f, panelH - 150f);
+Check(PanelHit.Inside(bigList, bigPanel.X + panelW * .5f, bigPanel.Y + panelH * .5f), "面板中央命中清单");
+Check(!PanelHit.Inside(bigList, bigPanel.X + 6f, bigPanel.Y + 6f), "面板左上角（标题/边距）不算清单内，滚轮不处理");
+Check(!PanelHit.Inside(bigList, 10f, 10f) && !PanelHit.Inside(bigList, screenW - 1f, screenH - 1f),
+    "屏幕角落（面板外）不命中清单");
+Check(!PanelHit.Inside(bigList, bigPanel.X + panelW - 30f, bigPanel.Y + 20f), "关闭按钮所在行不算清单内");
+
+// ---- 滚轮指纹：离开清单不清“已消费”的原生读数（重入不能复用陈旧读数），但物理每格都不能被压掉 ----
+var fingerprint = new WheelRouter();
+Check(fingerprint.Sample(-1f, 0f, wheelRow, wheelViewport) > 0f, "首帧原生读数 -1：滚一档");
+fingerprint.Suspend();
+Check(fingerprint.Sample(-1f, 0f, wheelRow, wheelViewport) == 0f,
+    "光标离开清单再回来：同一个没变化的原生读数不算新读数（不复用陈旧读数、不重复滚）");
+Check(fingerprint.Sample(-2f, 0f, wheelRow, wheelViewport) > 0f, "原生读数真的变了（-1 → -2）：照常滚");
+fingerprint.Reset();
+Check(fingerprint.Sample(-2f, 0f, wheelRow, wheelViewport) > 0f, "Reset 才清指纹：同一读数重新可用");
+
+var notches = new WheelRouter();
+float physicalTotal = 0f;
+for (int i = 0; i < 3; i++) physicalTotal += notches.Sample(0f, -1f, wheelRow, wheelViewport);
+Check(MathF.Abs(physicalTotal - 9f * wheelRow) < .001f,
+    "物理滚轮连续三帧同向各一格：3 档全都在（每格 3 行，一共 9 行，没有被指纹压掉）");
+Check(notches.Source == WheelSource.Physical, "原生读数为 0 时来源是物理滚轮");
+
+// ---- 关表按压归属：只拦“刚关表的那一次按压”，换页/失活/超时/读不到都放行 ----
+var owner = new PressOwnership();
+Check(!owner.ShouldSuppress(true, true, 5.0), "未持有按压：一律放行");
+owner.Arm(5.0);
+Check(owner.Armed, "关表那一刻起持有这次按压");
+Check(owner.ShouldSuppress(true, true, 5.0), "同一页、页面活跃、1 秒内：拦下这一下大厅按压（避免又触发背后控件）");
+Check(owner.ShouldSuppress(true, true, 5.9), "持续按住期间（<1 秒）继续拦");
+Check(!owner.ShouldSuppress(false, true, 5.9), "别的页：放行");
+Check(!owner.Armed, "换页后归属自动解除");
+
+owner.Arm(5.0);
+Check(!owner.ShouldSuppress(true, false, 5.2), "页面不活跃：放行");
+Check(!owner.Armed, "失活后归属自动解除");
+
+owner.Arm(5.0);
+Check(!owner.ShouldSuppress(true, true, 5.0 + PressOwnership.MaxSeconds + .01), "超过 1 秒（读不到松开）：放行");
+Check(!owner.Armed, "超时后归属自动解除，不会永久吞输入");
+
+owner.Arm(double.NaN);
+Check(!owner.ShouldSuppress(true, true, double.NaN), "时间戳不可用：放行");
+owner.Clear();
+Check(!owner.ShouldSuppress(true, true, 0.0), "清除后放行");
+
+owner.Arm(10);
+for (int tick = 1; tick <= 120; tick++)
+{
+    double t = 10 + tick / 60.0;
+    owner.Observe(true, t);
+    if (!owner.ShouldSuppress(true, true, t)) throw new Exception("confirmed close press leaked to lobby");
+}
+Check(owner.Armed && owner.ArmedAt == 12, "连续确认长按两秒仍归属面板");
+owner.Observe(false, 12.01);
+Check(!owner.ShouldSuppress(true, true, 12.01), "松开或无可信按键读数时原生分发立即放行");
+owner.Observe(true, 12.02);
+Check(!owner.Armed, "后续按下不能凭续期获得归属");
+var lifecycle = new DriverLifetime();
+Check(lifecycle.Running && !lifecycle.MouseActions, "无按压前缀：键盘和滚轮驱动仍运行，鼠标面板操作禁用");
+lifecycle.EnableMouseActions();
+Check(lifecycle.MouseActions && lifecycle.BeginShutdown(), "安装前缀后允许鼠标操作，第一次卸载进行清理");
+lifecycle.EnableMouseActions();
+Check(!lifecycle.Running && !lifecycle.MouseActions && !lifecycle.BeginShutdown(), "延迟回调不能重启已关闭的驱动或重复清理");
+
+// Scrollbar shares pixel offset with wheel, keyboard and virtualised row layout.
+{
+    var railBox = new ScreenRect(100,140,490,200);
+    var many = PanelModel.Create(new[]{new PlayerColumn(1,"A",items)},true,true,null,false);
+    float sy = many.Scroll(0,PanelModel.RowHeight*3,railBox.Height);
+    var rail = ListRail.Measure(railBox,many.ContentHeight,sy);
+    var railDrag = new RailDrag();
+    CursorSample At(float x,float y) => new(true,x,y,"test");
+    var pt = At(rail.Thumb.X+5,rail.Thumb.Y+7);
+    Check(!railDrag.Sample(rail,pt,true,ref sy),"opening press cannot acquire thumb");
+    railDrag.Sample(rail,pt,false,ref sy);
+    float start = sy;
+    Check(railDrag.Sample(rail,pt,true,ref sy) && Math.Abs(start-sy)<.01f,"grab offset is stable after keyboard/wheel scrolling");
+    Check(railDrag.Sample(rail,At(-100,999),true,ref sy) && sy==many.MaxScroll(railBox.Height) && many.LastVisible(sy,railBox.Height)==many.Lines.Length-1,"drag beyond track reaches last row without click-through");
+    Check(!railDrag.Sample(rail,At(-100,999),false,ref sy) && !railDrag.Held,"release outside frees capture");
+    var end = ListRail.Measure(railBox,many.ContentHeight,sy);
+    Check(Math.Abs(end.Thumb.Y+end.Thumb.Height-(railBox.Y+railBox.Height))<.01f,"handle flush at bottom of shared viewport");
+    railDrag.Sample(end,At(end.Track.X+2,end.Track.Y+1),true,ref sy);
+    Check(sy==0 && railDrag.Held,"track press seeks and clamps at top");
+    railDrag.Reset(); Check(!railDrag.Held && !railDrag.Sample(end,pt,true,ref sy),"close/page change cancels capture and requires release");
+    Check(!ListRail.Measure(railBox,railBox.Height,0).Visible && !ListRail.Measure(railBox,0,0).Visible,"short or empty lists never get a fake scrollbar");
+}
+Console.WriteLine($"OfflineTests complete: {passes} checks passed");

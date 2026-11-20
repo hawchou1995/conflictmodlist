@@ -18,9 +18,13 @@ public static class IlCalls
 
     public static IReadOnlyCollection<ushort> KnownOpcodes => Ops.Keys;
 
-    public static IReadOnlyList<int> CallTokens(byte[] il)
+    /// <summary>
+    /// 带偏移的调用点：<c>Offset</c> 是该 call 指令在方法体里的字节偏移，用于“调用顺序”类断言
+    /// （例如“鼠标采样必须在 1 Hz 刷新节流之前”）。偏移只对本方法体内单调递增，跨方法不可比。
+    /// </summary>
+    public static IReadOnlyList<(int Offset, int Token)> CallSites(byte[] il)
     {
-        var tokens = new List<int>();
+        var sites = new List<(int Offset, int Token)>();
         int i = 0;
         while (i < il.Length)
         {
@@ -42,7 +46,7 @@ public static class IlCalls
             if (op.Value == OpCodes.Call.Value || op.Value == OpCodes.Callvirt.Value || op.Value == OpCodes.Newobj.Value)
             {
                 if (i + 4 > il.Length) throw new DecodeException($"偏移 {opcodeOffset} 处 {op.Name} 的方法 token 不足 4 字节");
-                tokens.Add(BitConverter.ToInt32(il, i));
+                sites.Add((opcodeOffset, BitConverter.ToInt32(il, i)));
             }
 
             int operand = op.OperandType switch
@@ -57,6 +61,14 @@ public static class IlCalls
             if (operand < 0 || i + operand > il.Length) throw new DecodeException($"偏移 {opcodeOffset} 处 {op.Name} 的操作数越界（需要 {operand}，剩余 {il.Length - i}）");
             i += operand;
         }
+        return sites;
+    }
+
+    /// <summary>只要 token（调用顺序无关的既有断言用），与 <see cref="CallSites"/> 共用同一份解码。</summary>
+    public static IReadOnlyList<int> CallTokens(byte[] il)
+    {
+        var tokens = new List<int>();
+        foreach (var site in CallSites(il)) tokens.Add(site.Token);
         return tokens;
     }
 
