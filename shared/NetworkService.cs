@@ -274,7 +274,7 @@ internal sealed class NetworkService
     // only, never a third party's perspective and never the peer's self-reported rates.
     internal string SlotText(ulong id, bool local, bool bot)
     {
-        if (bot) return "BOT · 网络\n无独立网络连接\n延迟 -- 抖动 -- 丢包 --";
+        if (bot) return "BOT · 网络\n无独立网络连接";
         var lines = new List<string>();
         bool own = local || (id != 0 && id == scope.Self);
         string loss(NetworkEdge e) => e.Rx < 0 && e.Tx < 0 ? "缺收/缺发 未知" : $"缺收 {Pct(e.Rx)}　缺发 {Pct(e.Tx)}";

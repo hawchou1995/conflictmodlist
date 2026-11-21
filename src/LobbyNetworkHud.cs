@@ -139,7 +139,7 @@ internal sealed class LobbyNetworkHud
                 if(s.State!=state)
                 {
                     label.ForceMeshUpdate(false,false);
-                    Plugin.Logger.LogInfo($"[槽位网络] 第{i+1}栏 {state} glyphs={label.textInfo.characterCount} active={label.gameObject.activeInHierarchy}");
+                    Plugin.Logger.LogDebug($"[槽位网络] 第{i+1}栏 {state} glyphs={label.textInfo.characterCount} active={label.gameObject.activeInHierarchy}");
                     s.State=state;
                 }
             }

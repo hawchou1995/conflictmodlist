@@ -7,7 +7,7 @@
 ## 安装和使用
 
 1. 在 r2modman 或 Thunderstore Mod Manager 的 GTFO 社区安装或更新 `HawChow-conflictmodlist`。手动安装时，退出游戏，将 ZIP 中的 `plugins/conflictmodlist.dll` 放入当前配置的 `BepInEx/plugins/`，只保留一份。
-2. 网络文字直接挂在原生装备栏上，随该栏出现和移动，不等所有武器图标。正常贴在「模组对照」上方 2 像素；没有可用按钮行时，已展开的栏使用 NetworkQualityTracker 的原生位置。BOT 不创建按钮，空栏不显示；看板不接管点击。
+2. 网络文字直接挂在原生装备栏上，随该栏出现和移动，不等所有武器图标。正常贴在「模组对照」上方 2 像素；没有可用按钮行时，已展开的栏使用 NetworkQualityTracker 的原生位置。BOT 卡片只提示「无独立网络连接」，不列网络指标，也不创建按钮。空栏不显示；看板不接管点击。
 3. 大厅和局内按 `Esc` 打开的装备页都有「模组对照」入口。看板随装备栏的视差移动，不锁屏幕像素；点击真人栏的入口可查看团队版本表及选中玩家。用大厅光标点右上角「关闭」或按 `Esc` 退出。长清单可用滚轮、键盘和可拖滑块。
 
 从旧的拼写错误包 `confilctmodlist` 迁移时，先移除旧包，避免重复加载；已经在用 `conflictmodlist` 的玩家直接更新即可。
@@ -39,7 +39,7 @@
 
 「无近期兼容报告」只说明本机没有收到仍然有效的报告，不能据此判断队友没装模组。「已收报告·探针不可用」表示收到了报告，但当前没有可用的探针通道；「等待探针回声」表示通道可用，还没有可用的回声。波动至少需要两个有效往返样本，包含轮询等待；缺收/缺发只统计探针缺号，不是游戏丢包率。能确定的方向单独显示，测得的 `0%` 不等于未知。互报不需要房主转发，也不会为未确认支持的队友增加探针流量。
 
-显示依据与取舍见[网络测量说明](https://github.com/hawchou1995/conflictmodlist/blob/v1.1.10/docs/network-research.md)。[多人复测清单](https://github.com/hawchou1995/conflictmodlist/blob/v1.1.10/docs/live-check.md) 区分单客机、双客机和混装。
+显示依据与取舍见[网络测量说明](https://github.com/hawchou1995/conflictmodlist/blob/v1.1.11/docs/network-research.md)。[多人复测清单](https://github.com/hawchou1995/conflictmodlist/blob/v1.1.11/docs/live-check.md) 区分单客机、双客机和混装。
 
 ## 颜色和筛选
 

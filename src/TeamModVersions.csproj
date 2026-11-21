@@ -4,7 +4,7 @@
     <LangVersion>11</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.1.10</Version>
+    <Version>1.1.11</Version>
     <Deterministic>true</Deterministic>
     <AssemblyName>conflictmodlist</AssemblyName>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>

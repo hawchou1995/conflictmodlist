@@ -1,6 +1,8 @@
-# 1.1.6 装备大厅复测（待执行，不是实机通过记录）
+# 装备页实机复测步骤（不是实机通过记录）
 
-用 `Survival` 打开装备页。已占用栏应随原生装备栏显示网络文字（含 BOT），空栏没有看板。移动鼠标、关闭并重开、局内按 `Esc`：检查文字不跳位、不重复。`[槽位网络]` 记录 `native-tmp/compare-row`（按钮行）或 `native-tmp/reference-row`（无按钮备用位置）、字形数 `glyphs` 和 `active`。若没有显示，对照 `waiting-equipment`、`waiting-watermark`、`waiting-button-row` 或完整异常；有字形仍需目视确认。
+用 `Survival` 打开装备页。已占用栏应随原生装备栏显示网络文字（含 BOT），空栏没有看板。移动鼠标、关闭并重开、局内按 `Esc`：检查文字不跳位、不重复。
+
+若某栏不显示，先在 Info 查 `[槽位网络]` 的 `waiting-equipment`、`waiting-watermark` 或 `waiting-button-row`，并检查 Warning 的完整异常。自 1.1.11 起，要查卡片是否就绪，请在 BepInEx 的日志输出中启用 Debug，查找 `native-tmp/compare-row`（按钮行）、`native-tmp/retained-row`（沿用位置）或 `native-tmp/reference-row`（备用行）的 `glyphs` 和 `active`。Info 没有这些就绪行属正常；有字形仍需目视确认。
 
 只有本机和 BOT 时，不应把整机网卡数值当作游戏流量。真人加入后再看几个采样窗口，区分游戏载荷、网卡、待采样和真实空闲；复测多人上报可用以下步骤。
 

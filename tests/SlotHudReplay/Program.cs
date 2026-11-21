@@ -18,6 +18,9 @@ bars[0].m_weaponsHeaderText.enabled=true;Frame();Check(Visible().Length==0,"no p
 buttons.row=true;Frame();Check(Visible().Length==0,"missing template retry");
 GuiManager.WatermarkLayer=new();var original=GuiManager.WatermarkLayer.m_watermark.m_watermarkText;original.text="Rundown watermark";
 Frame();var me=Visible().Single();Check(me.rectTransform.parent==bars[0].m_hasPlayerRoot.transform && me.richText && Plain(me.text)=="01 /  local-0" && me.textInfo.characterCount>0,"native clone and indexed title under occupied pillar");
+Frame();Frame(true);
+Check(Plugin.Logger.Debug.Count==1 && Plugin.Logger.Debug[0].Contains("native-tmp/compare-row glyphs=") && Plugin.Logger.Debug[0].EndsWith("active=True"),"ready diagnostic once across unchanged frames and data refresh");
+Check(!Plugin.Logger.Info.Any(s=>s.Contains("native-tmp/")) && Plugin.Logger.Info.Any(s=>s.Contains("waiting-watermark")),"ready detail stays out of Info; waiting reason remains visible");
 Check(FieldTerminalTheme.Opacity==0 && me.outlineWidth>0 && me.outlineColor==new Color32(12,12,12,255) && original.outlineWidth==0,"transparent plate, outlined clone, unchanged watermark");
 Check(me.rectTransform.localPosition==new Vector3(120,42,1),"button top +2px in native pillar");
 bars[1].m_weaponsHeaderText.enabled=true;Frame();var bot=Visible().Single(s=>Plain(s.text)=="02 /  BOT");Check(bot.rectTransform.localPosition==me.rectTransform.localPosition,"BOT and local share a bottom");
@@ -26,11 +29,13 @@ buttons.row=false;Frame();Frame();Check(me.rectTransform.localPosition==new Vect
 SNet.Slots.Players[3]=new(99,false,false);bars[2].m_introDone=true;Frame();Check(Visible().Any(c=>Plain(c.text)=="03 /  peer99" && c.rectTransform.localPosition.x==1025),"cold Esc uses the native row");
 buttons.row=true;net.version++;Frame(true);Check(Visible().Length==3 && Plain(me.text)=="01 /  local-1" && TextMeshPro.Clones.Count==3,"text refreshed in place");
 SNet.Slots.Players[1]=new(101,false,false);bars[3].m_introDone=true;Frame();Check(Visible().Length==4,"four occupied slots");
+SNet.Slots.Players[0]=new(75,false,false);Frame();var peer=Visible().Single(s=>Plain(s.text)=="02 /  peer75");
+SNet.Slots.Players[0]=new(0,false,true);Frame();bot=Visible().Single(s=>Plain(s.text)=="02 /  BOT");Check(!peer.gameObject.activeSelf && Visible().Length==4,"BOT replaces peer text before the next data tick");
 SNet.Slots.Players[0]=null;Frame();Check(Visible().Length==3 && !bot.gameObject.activeSelf,"vacant slot immediately cleared");
 hud.Clear();Check(Visible().Length==0 && original.text=="Rundown watermark" && original.gameObject.activeSelf,"page exit releases clones only");
 Frame();Check(Visible().Length==3,"page reopen rebuilds once");hud.Clear();
 Console.WriteLine("PASS native watermark clone, four occupied pillars, no generic inventory lookup, per-seat intro, 2px gap, motion, button loss, Esc fallback, vacancy and cleanup");
-string[] samples={"本机 · P2P\n收 未知\n发 640 B/s\n采样 #12 · 0.42 秒前\n无共享真人", "队友\n游戏缓存·采样时间未知\n往返估值 44 ms\n波动/探针缺号 未知\n无近期兼容报告", "BOT · 网络\n无独立网络连接\n延迟 -- 抖动 -- 丢包 --", "整机网卡 · 非 P2P\n收 0 KiB/s\n发 1.2 KiB/s\n采样 #28 · 0.10 秒前\n游戏计数未确认"};
+string[] samples={"本机 · P2P\n收 未知\n发 640 B/s\n采样 #12 · 0.42 秒前\n无共享真人", "队友\n游戏缓存·采样时间未知\n往返估值 44 ms\n波动/探针缺号 未知\n无近期兼容报告", "BOT · 网络\n无独立网络连接", "整机网卡 · 非 P2P\n收 0 KiB/s\n发 1.2 KiB/s\n采样 #28 · 0.10 秒前\n游戏计数未确认"};
 var cards=samples.Select((s,i)=>FieldTerminalTheme.Format(s,i,i==2)).ToArray();
 Check(Plain(cards[0]).Contains("RX  收   未知\nTX  发   640 B/s") && Plain(cards[3]).Contains("非 P2P\nRX  收   0 KiB/s"),"unknown, idle and host scope survive styling");
 Check(!cards[2].Contains($"#{FieldTerminalTheme.Accent:X6}") && !FieldTerminalTheme.Format("<sprite=0>",0,false).Contains("<sprite"),"neutral BOT and no source markup");
@@ -40,7 +45,12 @@ Console.WriteLine("PASS theme: source and direction preserved; unknown distinct 
 namespace TeamModVersions {
  internal class TeamNetwork {public int version;public string SlotText(ulong id,bool local,bool bot)=>bot?"BOT":local?"local-"+version:"peer"+id;}
  internal class LobbyButtons {public bool row;public bool CompareRect(int i,CM_PlayerLobbyBar b,bool bot,out Transform? owner,out Rect r,out float z){owner=b.m_hasPlayerRoot.transform;r=new(120,20,80,20);z=1;return row;}}
- internal static class Plugin {public static Log Logger=new();} internal class Log {public void LogInfo(string s){} public void LogWarning(string s)=>throw new Exception(s);}
+ internal static class Plugin {public static Log Logger=new();}
+ internal class Log {
+  public readonly List<string> Info=new(), Debug=new();
+  public void LogInfo(string s)=>Info.Add(s); public void LogDebug(string s)=>Debug.Add(s);
+  public void LogWarning(string s)=>throw new Exception(s);
+ }
 }
 namespace CellMenu {internal class CM_PageLoadout {public CM_PlayerLobbyBar[] m_playerLobbyBars=new CM_PlayerLobbyBar[4];} internal class CM_PlayerLobbyBar { public GameObject m_hasPlayerRoot=new();public int m_playerSlotIndex;public P? m_player=>null;public bool m_introDone;public TextMeshPro m_weaponsHeaderText=new(){enabled=false};public object m_inventorySlotItems=>throw new MissingMethodException("Void System.__Canon..ctor(IntPtr)");}}
 namespace SNetwork {internal record P(ulong Lookup,bool IsLocal,bool IsBot);internal class Slots {public P?[] Players=new P?[4];public P? GetPlayerInSlot(int n)=>Players[n];} internal static class SNet{public static Slots Slots=new();}}

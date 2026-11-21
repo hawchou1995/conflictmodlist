@@ -198,7 +198,7 @@ internal static class Gate
         Check(!self.Contains(missing) && Slot(only.Service,1,false,false)==self,"solo local slot has throughput, not self-link placeholders");
         only.Service.Reset(); Check(!Slot(only.Service,1,true,false).Contains(missing),"no self-link placeholders before roster confirmation");
         string bot=Slot(only.Service,2,false,true);
-        Check(bot=="BOT · 网络\n无独立网络连接\n"+missing && !bot.Contains('0'),"BOT shows three unavailable metrics, not fabricated measurements");
+        Check(bot=="BOT · 网络\n无独立网络连接","BOT shows its identity and connection status only");
         Check(Slot(only.Service,0,true,true)==bot && Slot(only.Service,1,true,true)==bot && Slot(only.Service,0,false,false).StartsWith("队友\n"),"bot takes precedence over zero/self ID and local ownership; unknown remote is not self");
         var team=new World(); for(ulong i=1;i<=4;i++) team.Add(i); team.Run(60,_=>true);
         foreach (var c in team.Clients.Values)
