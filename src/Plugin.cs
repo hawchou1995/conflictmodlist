@@ -13,7 +13,7 @@ public sealed class Plugin : BasePlugin
 {
     internal const string ModName = "conflictmodlist";
     internal const string Id = "hawchow." + ModName;
-    internal const string Version = "1.1.11";
+    internal const string Version = "1.1.14";
     internal static ManualLogSource Logger = null!;
     internal static ConfigEntry<bool> ShowMatches = null!;
     internal static TeamVersionsDriver? Driver;

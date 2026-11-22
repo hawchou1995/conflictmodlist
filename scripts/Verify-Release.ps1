@@ -34,6 +34,10 @@ try {
     $manifest=Get-Content 'packaging/manifest.json' -Encoding UTF8 -Raw | ConvertFrom-Json
     $av=[Reflection.AssemblyName]::GetAssemblyName($dll).Version.ToString(3)
     if ($av -ne $manifest.version_number) { throw 'Manifest and DLL versions disagree' }
+    # The plugin reports its own version from a literal, so a bump that misses it makes the log name a
+    # build that is not running. Fail the release instead of shipping that.
+    $declared=(Select-String -LiteralPath 'src/Plugin.cs' -Pattern 'const string Version = "([0-9]+\.[0-9]+\.[0-9]+)"').Matches[0].Groups[1].Value
+    if ($declared -ne $av) { throw "Plugin.Version is $declared but the DLL is $av" }
     $target=Join-Path $root "artifacts\$av"; [void][IO.Directory]::CreateDirectory($target)
     $dest=Join-Path $target 'conflictmodlist.dll'; Copy-Item -LiteralPath $dll -Destination $dest -Force
     $h=(Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash

@@ -31,6 +31,7 @@ internal interface INetworkIO
 {
     NetworkRoster Roster();
     (int Route, int Estimate) Inspect(ulong peer, bool compatible); // active legacy route for cooperating clients; otherwise cached game Ping only
+    int RouteEstimate(ulong peer); // local SDR prediction, not an edge or wire report
     // Cumulative game payload bytes. Source == None means the counter cannot see the game transport
     // at all, so its numbers must never be presented as a measured zero.
     NetworkTotal PayloadTotals();
@@ -54,6 +55,8 @@ internal sealed class NetworkService
         internal ulong Epoch;
         internal NetworkLink Link = new();
         internal NetworkEdge Edge;
+        internal double GapsAt;
+        internal int SteamRouteMs = -1;
         internal int PreviousNative = -1;
     }
     private readonly INetworkIO io;
@@ -110,6 +113,7 @@ internal sealed class NetworkService
                 Refresh(r,id,p);
                 bool compatible = p.Report != null && now <= p.Expires;
                 var (route, estimate) = io.Inspect(id,compatible);
+                p.SteamRouteMs = io.RouteEstimate(id);
                 p.Link.Route(route);
                 if (route is 1 or 2 && p.Report != null && now <= p.Expires)
                 {
@@ -129,6 +133,7 @@ internal sealed class NetworkService
                     p.PreviousNative = -1;
                     p.Edge = route == 6 && estimate is > 0 and <= 10000 ? new(id,6,estimate,-1,-1,-1) : p.Link.Edge(id,route,estimate,now);
                 }
+                p.GapsAt = p.Link.LastArrival;
             }
             var next = io.PayloadTotals();
             // Totals from two different meters never subtract: a source change drops the baseline.
@@ -163,7 +168,7 @@ internal sealed class NetworkService
             if (peers.Count > 0 && now >= nextPublish && r.ServerTime > published)
             {
                 nextPublish = now+(open ? 4 : 5); published = r.ServerTime;
-                io.Write(scope,NetworkWire.Encode(scope,new(epoch,published,rx,tx,peers.Values.Select(p => p.Edge.Route is 3 or 4 or 6 ? new NetworkEdge(p.Edge.Peer,0,-1,-1,-1,-1) : p.Edge).ToArray())));
+                io.Write(scope,NetworkWire.Encode(scope,new(epoch,published,rx,tx,peers.Values.Select(p => ReportEdge(p.Edge)).ToArray())));
             }
             else if (peers.Count == 0 && published != 0) { io.Write(scope,"-"); published = 0; }
         }
@@ -203,6 +208,20 @@ internal sealed class NetworkService
     private static string RoundTrip(NetworkEdge e) => e.Route == 0 || e.Rtt < 0 ? "往返 未知" : e.Route is 1 or 2
         ? $"往返上限 {e.Rtt+1} ms" // polling adds delay; +1 covers rounding the echoed hold and the residual
         : $"往返估值 {Ms(e.Rtt)}";
+    private static NetworkEdge ReportEdge(NetworkEdge edge) => edge.Route switch
+    {
+        3 or 4 => edge with { Route = edge.Route-2, Rtt = -1, Jitter = -1 },
+        6 => new(edge.Peer,0,-1,-1,-1,-1),
+        _ => edge
+    };
+
+    private NetworkEdge LocalEdge(Peer peer)
+    {
+        var e = peer.Edge;
+        if (e.Route is >= 1 and <= 4 && now-peer.GapsAt > NetworkWire.Ttl) e = e with { Rx = -1, Tx = -1 };
+        if (e.Peer == 0 || now-sampled+e.Age <= NetworkWire.Ttl) return e;
+        return e.Route is 1 or 2 && (e.Rx >= 0 || e.Tx >= 0) ? e with { Rtt = -1, Jitter = -1 } : default;
+    }
     private string ProbeNote(Peer peer, NetworkEdge e)
     {
         if (peer.Report == null || now > peer.Expires)
@@ -251,11 +270,11 @@ internal sealed class NetworkService
         // Distinguishes "nobody else here" from "everybody quiet": an empty link list is a roster fact.
         if (local && peers.Count == 0) lines.Add("同大厅其他真人：无");
         if (!local && report != null) lines.Add($"该端接收 {Rate(report.InRate)}　发送 {Rate(report.OutRate)}");
-        var edges = local ? peers.Values.Select(p => p.Edge).ToArray() : report?.Edges ?? Array.Empty<NetworkEdge>();
+        var edges = local ? peers.Values.Select(LocalEdge).ToArray() : report?.Edges ?? Array.Empty<NetworkEdge>();
         foreach (ulong id in peers.Keys.Prepend(scope.Self).Where(id => id != selected))
         {
             var e = Array.Find(edges,x => x.Peer == id);
-            if (e.Peer != 0 && now - (local ? sampled : observer!.ReportAt) + e.Age > NetworkWire.Ttl) e = default;
+            if (!local && e.Peer != 0 && now - observer!.ReportAt + e.Age > NetworkWire.Ttl) e = default;
             bool probe = e.Route is >= 1 and <= 4;
             string path = e.Route switch {1 => "直连探针", 2 => "中继探针", 3 => "直连探针·游戏缓存", 4 => "中继探针·游戏缓存", 5 => "消息会话", 6 => "游戏缓存", _ => "不可观测"};
             if (e.Route is 3 or 4 or 6) path += "·采样时间未知";
@@ -298,17 +317,17 @@ internal sealed class NetworkService
             return Join(lines);
         }
         lines.Add("队友");
-        if (!fresh) { lines.Add("大厅名单未就绪"); lines.Add("无链路测量"); return Join(lines); }
-        if (!peers.TryGetValue(id, out var peer)) { lines.Add("网络名单未确认"); lines.Add("无链路数据"); return Join(lines); }
-        var edge = peer.Edge;
-        bool stale = edge.Peer != 0 && now-sampled+edge.Age > NetworkWire.Ttl;
-        if (edge.Peer == 0 || stale) edge = default; // an expired sample never reads as a measurement
+        const string routeLabel = "Steam 路由估值 ";
+        if (!fresh) { lines.Add("大厅名单未就绪"); lines.Add("无链路测量"); lines.Add(routeLabel+"未知"); return Join(lines); }
+        if (!peers.TryGetValue(id, out var peer)) { lines.Add("网络名单未确认"); lines.Add("无链路数据"); lines.Add(routeLabel+"未知"); return Join(lines); }
+        var edge = LocalEdge(peer);
         lines.Add(edge.Route switch
         {
             1 => "本机: 直连探针", 2 => "本机: 中继探针", 3 => "直连探针·缓存时间未知",
             4 => "中继探针·缓存时间未知", 5 => "本机: 消息会话", 6 => "游戏缓存·采样时间未知", _ => "本机: 未测得",
         });
         lines.Add(RoundTrip(edge));
+        lines.Add(routeLabel + Ms(peer.SteamRouteMs is >= 0 and <= 10000 ? peer.SteamRouteMs : -1));
         if (edge.Route is >= 1 and <= 5)
         {
             lines.Add(edge.Jitter < 0 ? "波动 待采样" : $"波动 {Ms(edge.Jitter)}");
@@ -325,7 +344,7 @@ internal sealed class NetworkService
         foreach (char c in s) w += c >= 0x2E80 || c is >= '\u3000' and <= '\u303F' || c is >= '\uFF00' and <= '\uFFEF' ? 2 : 1;
         return w;
     }
-    // A second note is dropped rather than wrapped: the card has no seventh row.
+    // Keep optional local notes on one line.
     private static bool Fits(List<string> notes,string extra) => Columns(string.Join("·",notes.Append(extra))) <= 24;
     private static string Join(List<string> lines) => string.Join("\n",lines);
 }

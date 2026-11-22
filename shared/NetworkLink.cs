@@ -15,6 +15,7 @@ internal sealed class NetworkLink
     // No native call on the unconfirmed-peer path. Missing/out-of-range is unknown, never zero RTT.
     internal static (int Route,int Estimate) CachedEstimate(int ping) => ping is > 0 and <= 10_000 ? (6,ping) : (0,-1);
     internal int History => sent.Length + arrivals.Count + rtts.Count; // <= 60 slots total
+    internal double LastArrival => lastArrival;
     internal void Pause()
     {
         arrivals.Clear(); rtts.Clear(); lastAck = txSeq; remoteLoss = -1;
@@ -31,6 +32,8 @@ internal sealed class NetworkLink
     internal void Receive(NetworkPulse p, double now)
     {
         if (p.Seq <= lastRx) return; // ignore duplicates/out of order (quality tracks on-time arrivals)
+        // Do not bridge an expired receive window with new sequence numbers after a gap in sampling.
+        if (now-lastArrival > NetworkWire.Ttl) arrivals.Clear();
         lastRx = p.Seq; lastArrival = now; remoteLoss = p.Loss;
         Push(arrivals,(p.Seq,now));
         if (p.Ack <= lastAck || p.Ack > txSeq) return;

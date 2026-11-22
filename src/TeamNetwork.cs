@@ -32,7 +32,7 @@ internal sealed class TeamNetwork
     {
         // Dedicated non-game channel. Do not accept or open sessions, change relay settings or touch game queues.
         private const int Channel = 0x544d5601;
-        private readonly Dictionary<ulong,int> estimates = new();
+        private readonly Dictionary<ulong,(int GamePing,int RouteMs)> estimates = new();
         private Il2CppStructArray<byte>? buffer;
         private Harmony? counters;
         private bool unavailable;
@@ -51,6 +51,9 @@ internal sealed class TeamNetwork
         private string? interfaceSet;
         private NetworkSource announced;
         private static bool hostAnnounced;
+        private string? publishedRoute;
+        private ulong publishedLobby;
+        private bool routeMetadataWarned;
         private static NetworkScope Current()
         {
             if (!SNet.IsInLobby || SNet.CoreType != SNet_CoreType.Steam || SNet.Lobby?.Identifier is not {} id ||
@@ -70,15 +73,45 @@ internal sealed class TeamNetwork
             for (int i=0;i<n;i++) ids[i] = SteamMatchmaking.GetLobbyMemberByIndex(lobby,i).m_SteamID;
             if (!ids.Contains(scope.Self) || ids.Contains(0UL) || ids.Distinct().Count() != n) { Release(); return default; }
             if (scope != meterScope) { meter.Reset(SteamBytes(),GameBytes()); meterScope = scope; announced=NetworkSource.None; }
+            // Publish this machine's own ping location so each peer can estimate its own route here. It is
+            // written only when it changes, so a steady location costs no lobby traffic between samples.
+            PublishRoute(scope.Lobby,SteamRouteEstimate.Local());
             var players = SNet.LobbyPlayers;
             if (players != null && players.Count <= 32)
                 for (int i=0;i<players.Count;i++)
-                    if (players[i] is {} p && !p.IsBot && !p.IsLocal && ids.Contains(p.Lookup)) estimates[p.Lookup] = p.Ping;
+                    if (players[i] is {} p && !p.IsBot && !p.IsLocal && ids.Contains(p.Lookup))
+                        estimates[p.Lookup] = (p.Ping,ReadRoute(lobby,p));
             return new(scope,ids,SteamUtils.GetServerRealTime());
         }
+        private void PublishRoute(ulong lobby, string? marker)
+        {
+            if (marker == null ? publishedRoute == null || publishedLobby != lobby
+                : marker == publishedRoute && publishedLobby == lobby) return;
+            try
+            {
+                SteamMatchmaking.SetLobbyMemberData(new CSteamID(lobby),SteamRouteEstimate.Key,marker ?? "-");
+                publishedRoute = marker; publishedLobby = lobby;
+            }
+            catch (Exception e) { WarnRouteMetadata(e); }
+        }
+        private int ReadRoute(CSteamID lobby, SNet_Player player)
+        {
+            string? marker = null;
+            try { marker = SteamMatchmaking.GetLobbyMemberData(lobby,new CSteamID(player.Lookup),SteamRouteEstimate.Key); }
+            catch (Exception e) { WarnRouteMetadata(e); }
+            return SteamRouteEstimate.Read(player,marker);
+        }
+        private void WarnRouteMetadata(Exception e)
+        {
+            if (routeMetadataWarned) return;
+            routeMetadataWarned = true;
+            Plugin.Logger.LogWarning($"Steam 路由位置的大厅数据读写失败：{e.GetType().Name}；原往返读数不受影响。");
+        }
+        public int RouteEstimate(ulong peer) => estimates.TryGetValue(peer,out var reading) ? reading.RouteMs : -1;
         public (int Route,int Estimate) Inspect(ulong peer, bool compatible)
         {
-            if (!estimates.TryGetValue(peer,out int ping)) return (0,-1);
+            if (!estimates.TryGetValue(peer,out var reading)) return (0,-1);
+            int ping = reading.GamePing;
             // Joining unconfirmed peers must not construct a SteamNetworkingIdentity or query Messages.
             if (!compatible) return NetworkLink.CachedEstimate(ping);
             if (!SteamNetworking.GetP2PSessionState(new CSteamID(peer),out var state) ||
@@ -189,7 +222,16 @@ internal sealed class TeamNetwork
         {
             if (counters!=null) { try { counters.UnpatchSelf(); } finally { counters=null; } }
             meterScope=default; announced=NetworkSource.None;
-            estimates.Clear(); buffer = null;
+            if (publishedRoute != null)
+            {
+                try
+                {
+                    var lobby = Current().Lobby;
+                    if (lobby == publishedLobby) PublishRoute(lobby,null);
+                }
+                catch (Exception e) { WarnRouteMetadata(e); }
+            }
+            estimates.Clear(); buffer = null; publishedRoute = null; publishedLobby = 0; SteamRouteEstimate.Reset();
         }
     }
 }
