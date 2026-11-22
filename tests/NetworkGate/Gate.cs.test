@@ -350,8 +350,42 @@ internal static class Gate
         g=g with {Rx=301}; Check(meter.Sample(s,g)==new NetworkTotal(301,-1,NetworkSource.Game),"stalled Steam does not mask live game bytes");
         Check(meter.Sample(s,g)==new NetworkTotal(301,-1,NetworkSource.Game),"idle confirmed source remains selected");
     }
+    private static void RoutePublication()
+    {
+        var publisher = new RouteMarkerPublication();
+        string? data = "";
+        int reads = 0, writes = 0;
+        bool drop = true;
+        RouteMarkerPublication.Result Sample(long now, string? marker) => publisher.Sync(now, marker,
+            () => { reads++; return data; }, value => { writes++; if (!drop) data = value; });
+        Check(Sample(0, null) == RouteMarkerPublication.Result.None && reads == 0 && writes == 0, "no write before local marker exists");
+        Check(Sample(0, "marker-A") == RouteMarkerPublication.Result.None && writes == 1 && data == "", "void set is not a confirmation");
+        Check(Sample(5999, "marker-A") == RouteMarkerPublication.Result.None && reads == 1 && writes == 1, "no per-sample retry before interval");
+        drop = false;
+        Check(Sample(6000, "marker-A") == RouteMarkerPublication.Result.Missing && data == "marker-A" && writes == 2, "retry unchanged marker after a dropped set");
+        Check(Sample(12000, "marker-A") == RouteMarkerPublication.Result.Visible && writes == 2, "later readback confirms visibility to self");
+        Check(Sample(18000, "marker-A") == RouteMarkerPublication.Result.None && writes == 2, "stable data does not rewrite or relog");
+        data = "";
+        Check(Sample(24000, "marker-A") == RouteMarkerPublication.Result.Missing && data == "marker-A", "restore a confirmed key that disappears");
+        drop = true;
+        Sample(30000, null);
+        Check(data == "marker-A" && publisher.HasPendingOrVisibleData, "do not forget an unconfirmed withdrawal");
+        drop = false;
+        Sample(36000, null);
+        Check(data == "-", "retry withdrawal, never publish the missing marker as a value");
+        Sample(42000, null);
+        Check(!publisher.HasPendingOrVisibleData, "stop withdrawing after readback");
+        publisher.Reset(); data = null;
+        int before = writes;
+        Check(Sample(43000, "marker-B") == RouteMarkerPublication.Result.Missing && writes == before, "no write to an invalid lobby/member");
+        publisher.Reset(); data = "";
+        Check(Sample(43001, "marker-A") == RouteMarkerPublication.Result.None && writes == before + 1, "new lobby publishes the same marker without inheriting the previous throttle");
+        Console.WriteLine("PASS route marker publication: void set, bounded retry, readback, withdrawal, lobby reset");
+    }
+
     public static void Main()
     {
+        RoutePublication();
         foreach(int missing in new[]{-1,0,10001,int.MaxValue}) Check(NetworkLink.CachedEstimate(missing)==(0,-1),"invalid join ping remains unknown");
         Check(NetworkLink.CachedEstimate(1)==(6,1) && NetworkLink.CachedEstimate(10000)==(6,10000),"both boundaries are game estimates only");
         var w=new World(); w.Members=new ulong[]{1}; var client=w.Add(1); w.Run(1,_=>true);

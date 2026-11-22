@@ -9,11 +9,8 @@ using Steamworks;
 
 namespace TeamModVersions;
 
-// Local Steam relay estimate of this machine's route to one teammate. It is a prediction computed here
-// from a ping location the peer never had to send to the player: either the location the game already
-// caches for that peer, or the location the peer publishes itself in lobby member data. Nothing here is
-// transmitted as a measurement, written to the peer, or used in place of a measured round trip, and no
-// value exists for the local player or for BOTs.
+// Predict a route to a real teammate using their cached game location or their own lobby marker.
+// The estimate itself is computed locally, never sent and never used in place of the game/probe RTT.
 //
 // Two sources exist because they fail independently. The game-side cache is populated by SNet's own ping
 // location exchange (SNet_Core_STEAM::OnPingLocation) and is the cheaper source, but a session can run a
@@ -50,8 +47,7 @@ internal static class SteamRouteEstimate
     private static string? localText;
     private static long localDue;
 
-    // A candidate marker plus the words needed to explain why it is missing. Key is stable for the whole
-    // session so one peer can report each distinct outcome exactly once.
+    // A candidate marker plus the words needed to explain why it is missing.
     private readonly record struct Marker(byte[]? Bytes, string Key, string Text);
 
     [DllImport("steam_api64", CallingConvention = CallingConvention.Cdecl, EntryPoint = "SteamAPI_SteamNetworkingUtils_SteamAPI_v004", ExactSpelling = true)]
@@ -128,18 +124,14 @@ internal static class SteamRouteEstimate
         catch (Exception e) { Trap(e); return null; }
     }
 
-    // Route to one remote teammate, or -1 when no source can answer. published is that peer's lobby
-    // member data under Key; an empty string means the peer either runs another build or has no location.
-    internal static int Read(SNet_Player player, string? published)
+    // Route to one remote teammate, or -1 when no source can answer.
+    internal static int Read(SNet_Player player, ulong id, int member, string? published)
     {
         if (unavailable) return -1;
-        ulong id;
-        try { id = player.Lookup; }
-        catch (Exception e) { Trap(e); return -1; }
         try
         {
             IntPtr self = Interface();
-            if (self == IntPtr.Zero) return Note(id, "interface", "Steam 路由接口未就绪");
+            if (self == IntPtr.Zero) return Note(id, member, "interface", "Steam 路由接口未就绪");
 
             Marker game;
             try { game = FromGame(player, id); }
@@ -150,15 +142,15 @@ internal static class SteamRouteEstimate
             }
             if (game.Bytes != null)
             {
-                int gameMs = Judge(id, self, game);
+                int gameMs = Judge(id, member, self, game);
                 if (gameMs >= 0) return gameMs;
             }
 
             Marker lobby = FromLobby(self, published);
-            if (lobby.Bytes != null) return Judge(id, self, lobby);
+            if (lobby.Bytes != null) return Judge(id, member, self, lobby);
 
-            return Note(id, $"none/{game.Key}/{lobby.Key}",
-                $"游戏缓存：{(game.Bytes != null ? "位置被 Steam 拒绝" : game.Text)}；队友发布：{lobby.Text}；游戏往返读数 {player.Ping}");
+            return Note(id, member, $"none/{game.Key}/{lobby.Key}",
+                $"游戏缓存：{(game.Bytes != null ? "位置被 Steam 拒绝" : game.Text)}；队友大厅标记：{lobby.Text}；游戏往返读数 {player.Ping}");
         }
         catch (Exception e) { Trap(e); return -1; }
     }
@@ -189,7 +181,9 @@ internal static class SteamRouteEstimate
     // The location this peer published for itself. Only a peer running this build writes it.
     private static Marker FromLobby(IntPtr self, string? published)
     {
-        if (string.IsNullOrEmpty(published) || published == "-") return new(null, "lobby/absent", "未发布位置标记");
+        if (published == null) return new(null, "lobby/unavailable", "成员数据不可读");
+        if (published.Length == 0) return new(null, "lobby/absent", "未读到位置标记");
+        if (published == RouteMarkerPublication.Withdrawn) return new(null, "lobby/withdrawn", "位置标记已撤回");
         if (published.Length >= TextSize)
             return new(null, "lobby/length", $"发布的位置标记长度 {published.Length} 不合规");
         if (published.Any(c => c is < ' ' or > '~') || !ParsePingLocationString(self, published, peer))
@@ -197,20 +191,20 @@ internal static class SteamRouteEstimate
         return new(peer, "lobby", "队友发布位置");
     }
 
-    private static int Judge(ulong id, IntPtr self, Marker marker)
+    private static int Judge(ulong id, int member, IntPtr self, Marker marker)
     {
         int ms = EstimatePingTimeFromLocalHost(self, marker.Bytes!);
         if (ms < 0 || ms > PlausibleMaxMs)
-            return Note(id, $"reject/{marker.Key}", $"{marker.Text}已就位，但 Steam 未给出可用估值（返回 {ms}）");
-        return Note(id, $"ok/{marker.Key}", $"{marker.Text} → 本机到该队友 {ms} ms", ms);
+            return Note(id, member, $"reject/{marker.Key}", $"{marker.Text}已就位，但 Steam 未给出可用估值（返回 {ms}）");
+        return Note(id, member, $"ok/{marker.Key}", $"{marker.Text} → 本机到该队友 {ms} ms", ms);
     }
 
     // One line per peer per distinct outcome: keyed on a stable token, so a value that drifts every sample
     // cannot write a line every sample.
-    private static int Note(ulong peer, string key, string text, int ms = -1)
+    private static int Note(ulong peer, int member, string key, string text, int ms = -1)
     {
         if (reported.Add($"{peer}/{key}"))
-            Plugin.Logger.LogInfo($"[Steam 路由估值] 队友 {peer}：{text}");
+            Plugin.Logger.LogInfo($"[Steam 路由估值] 大厅成员 #{member}：{text}");
         return ms;
     }
 
@@ -259,6 +253,8 @@ internal static class SteamRouteEstimate
         localText = null;
         localDue = utilsDue = Environment.TickCount64 + RelayStallMs;
     }
+
+    internal static void BeginLobby() => reported.Clear();
 
     internal static void Reset()
     {

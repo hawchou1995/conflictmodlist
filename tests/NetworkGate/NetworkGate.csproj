@@ -5,6 +5,6 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="Gate.cs.test;../../shared/NetworkWire.cs;../../shared/NetworkLink.cs;../../shared/NetworkService.cs;../../shared/HudCard.cs" />
+    <Compile Include="Gate.cs.test;../../shared/NetworkWire.cs;../../shared/NetworkLink.cs;../../shared/NetworkService.cs;../../shared/HudCard.cs;../../shared/RouteMarkerPublication.cs" />
   </ItemGroup>
 </Project>
